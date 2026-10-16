@@ -30,11 +30,14 @@ class FakeHub:
     """Stands in for ``huggingface_hub``; records calls, never touches a socket."""
 
     def __init__(self, *, side_effect=None, archive_root="PaperBananaBench",
-                 tasks=("diagram", "plot")) -> None:
+                 tasks=("diagram", "plot"), image_name="x.jpg",
+                 reference_name=None) -> None:
         self.calls: list[dict] = []
         self.side_effect = side_effect
         self.archive_root = archive_root
         self.tasks = tasks
+        self.image_name = image_name
+        self.reference_name = reference_name or image_name
 
     def hf_hub_download(self, repo_id, filename, **kwargs):
         self.calls.append({"repo_id": repo_id, "filename": filename, **kwargs})
@@ -49,9 +52,14 @@ class FakeHub:
                 base = f"{self.archive_root}/{task}"
                 archive_file.writestr(
                     f"{base}/ref.json",
-                    json.dumps([{"id": "x", "path_to_gt_image": "images/x.jpg"}]),
+                    json.dumps([{
+                        "id": "x",
+                        "path_to_gt_image": f"images/{self.reference_name}",
+                    }]),
                 )
-                archive_file.writestr(f"{base}/images/x.jpg", b"not-a-real-jpeg")
+                archive_file.writestr(
+                    f"{base}/images/{self.image_name}", b"not-a-real-jpeg"
+                )
         return str(archive)
 
 
@@ -124,6 +132,19 @@ class ExtractionTests(DatasetAcquisitionTestCase):
             "a failed acquisition left a tree that satisfies the presence check",
         )
 
+    def test_mojibake_image_names_are_renamed_to_the_reference_path(self) -> None:
+        """The published zip stores a few UTF-8 names as CP437 mojibake."""
+        original = "inference\u2011time.jpg"
+        stored = original.encode("utf-8").decode("cp437")
+
+        with fake_hub(image_name=stored, reference_name=original):
+            self.acquire()
+
+        self.assertTrue((self.task_dir() / "images" / original).is_file())
+        self.assertFalse((self.task_dir() / "images" / stored).exists())
+        entries = json.loads((self.task_dir() / "ref.json").read_text(encoding="utf-8"))
+        self.assertTrue((self.task_dir() / entries[0]["path_to_gt_image"]).is_file())
+
     def test_a_failed_download_leaves_nothing_usable_behind(self) -> None:
         with fake_hub(side_effect=RuntimeError("network died")):
             with self.assertRaises(RuntimeError):
@@ -176,6 +197,27 @@ class IncompleteTaskDirectoryTests(DatasetAcquisitionTestCase):
         with fake_hub() as again:
             self.acquire()
         self.assertEqual(again.calls, [], "a repaired dataset downloaded a second time")
+
+    def test_an_existing_mojibake_image_is_repaired_without_downloading(self) -> None:
+        original = "Graph\u2013Text.jpg"
+        stored = original.encode("utf-8").decode("cp437")
+        task_dir = self.partial(ref=False, images=True)
+        (task_dir / "images" / stored).write_bytes(b"jpeg")
+        (task_dir / "ref.json").write_text(
+            json.dumps([{"id": "ref", "path_to_gt_image": f"images/{original}"}]),
+            encoding="utf-8",
+        )
+        (task_dir / "test.json").write_text(
+            json.dumps([{"id": "test", "path_to_gt_image": f"images/{original}"}]),
+            encoding="utf-8",
+        )
+
+        with fake_hub() as hub:
+            self.acquire()
+
+        self.assertEqual(hub.calls, [], "a usable dataset triggered a download")
+        self.assertTrue((task_dir / "images" / original).is_file())
+        self.assertFalse((task_dir / "images" / stored).exists())
 
     def test_an_already_complete_task_dir_is_left_alone(self) -> None:
         task_dir = self.partial(ref=False, images=True)

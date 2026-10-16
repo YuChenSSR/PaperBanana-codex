@@ -20,6 +20,7 @@ Generates publication-quality academic diagrams and plots from method text.
 import argparse
 import asyncio
 import base64
+import json
 import shutil
 import sys
 import tempfile
@@ -76,6 +77,63 @@ def task_dir_usable(task_dir: Path) -> bool:
     return (task_dir / "ref.json").exists() and (task_dir / "images").is_dir()
 
 
+def _reference_image_names(task_dir: Path) -> set[str]:
+    """Basenames ``ref.json`` and ``test.json`` point at under ``images/``."""
+    names: set[str] = set()
+    for filename in ("ref.json", "test.json"):
+        path = task_dir / filename
+        if not path.is_file():
+            continue
+        try:
+            entries = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            relative = entry.get("path_to_gt_image")
+            if isinstance(relative, str) and relative:
+                names.add(Path(relative).name)
+    return names
+
+
+def align_reference_image_names(task_dir: Path) -> None:
+    """Rename CP437-mojibake images so ``path_to_gt_image`` resolves.
+
+    ``PaperBananaBench.zip`` marks these members as UTF-8, but the stored names
+    are the CP437 decoding of the original UTF-8 bytes. ``ref.json`` and
+    ``test.json`` still use the original Unicode paths, and ``PlannerAgent``
+    opens ``path_to_gt_image`` with no fallback. A file is renamed only when
+    that round-trip produces a missing reference name and nothing is already
+    at the destination.
+    """
+    images_dir = task_dir / "images"
+    if not images_dir.is_dir():
+        return
+    missing = {
+        name for name in _reference_image_names(task_dir)
+        if not (images_dir / name).exists()
+    }
+    if not missing:
+        return
+    for image in list(images_dir.iterdir()):
+        if not image.is_file():
+            continue
+        try:
+            repaired = image.name.encode("cp437").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if repaired not in missing:
+            continue
+        target = images_dir / repaired
+        if target.exists():
+            continue
+        image.rename(target)
+        missing.discard(repaired)
+
+
 def ensure_dataset(task_name: str):
     """Download PaperBananaBench data from HuggingFace if not present locally.
 
@@ -84,10 +142,13 @@ def ensure_dataset(task_name: str):
     and nothing was ever downloaded. The archive's internal root is
     ``PaperBananaBench/``, so extracting it into ``data/`` produces exactly the
     ``data/PaperBananaBench/<task>/ref.json`` and ``.../images/`` layout the
-    Retriever and Planner already expect, with each entry's ``path_to_gt_image``
-    resolving relative to its task directory unchanged.
+    Retriever and Planner already expect. A few diagram filenames in the
+    published zip are CP437 mojibake of the Unicode ``path_to_gt_image`` values;
+    those are renamed so the paths resolve.
     """
-    if task_dir_usable(dataset_task_dir(task_name)):
+    task_dir = dataset_task_dir(task_name)
+    if task_dir_usable(task_dir):
+        align_reference_image_names(task_dir)
         return
     try:
         from huggingface_hub import hf_hub_download
@@ -138,6 +199,10 @@ def ensure_dataset(task_name: str):
                 shutil.move(str(target), str(superseded / entry.name))
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(entry), str(target))
+
+        for child in destination.iterdir():
+            if child.is_dir():
+                align_reference_image_names(child)
 
 
 def extract_final_image_b64(result: dict, exp_mode: str) -> str | None:
