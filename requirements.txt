@@ -1,16 +1,30 @@
-google-genai
+# Python 3.12. Floors are the oldest releases that provide the APIs this
+# repository calls. asyncio is omitted on purpose: it is in the standard
+# library, and the PyPI package of that name is an obsolete 2015 backport
+# that breaks on Python 3.
+
+# Providers. google-genai 1.49.0 added ImageConfig.image_size.
+# openai 1.76.0 added images.generate(background, output_format, quality="high")
+# and already had chat.completions max_completion_tokens (since 1.45.0).
+google-genai>=1.49.0
+openai>=1.76.0
+# 1.0 removed messages.create(temperature=...), which this code passes.
+anthropic>=0.39.0,<1
+httpx>=0.27.0
+
+# UIs. Gradio Blocks/themes used here shipped in 5.0.
+# st.button(..., use_container_width=True) needs Streamlit >= 1.37.0.
 gradio>=5.0.0
-streamlit
-asyncio
-aiofiles
-pillow
-numpy
-tqdm
-json_repair
-anthropic
-openai
-matplotlib
-python-dotenv
-pyyaml
-google-auth
-huggingface_hub
+streamlit>=1.37.0
+
+# Images, arrays, and matplotlib plot execution (Agg backend).
+pillow>=10.4.0
+numpy>=1.26.4
+matplotlib>=3.8.0
+
+# Async IO, progress, config, and dataset download.
+aiofiles>=23.2.1
+tqdm>=4.66.0
+json-repair>=0.30.0
+pyyaml>=6.0.1
+huggingface_hub>=0.26.0
