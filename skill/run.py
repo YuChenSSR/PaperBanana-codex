@@ -20,14 +20,33 @@ Generates publication-quality academic diagrams and plots from method text.
 import argparse
 import asyncio
 import base64
+import json
 import shutil
 import sys
+import tempfile
+import zipfile
 from io import BytesIO
 from pathlib import Path
 
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.legacy_generation_options import (  # noqa: E402
+    FIGURE_SIZE_TO_IMAGE_SIZE,
+    generation_additional_info,
+)
+
+FIGURE_SIZE_CHOICES = list(FIGURE_SIZE_TO_IMAGE_SIZE)
+
+
+def build_additional_info(args) -> dict:
+    """The per-candidate ``additional_info``, routed through the shared helper.
+
+    Kept as a named seam so the wiring can be tested. Building this dict inline
+    was the original defect: ``figure_size`` never reached the pipeline.
+    """
+    return generation_additional_info(args.aspect_ratio, args.figure_size)
 
 
 def ensure_model_config():
@@ -39,26 +58,151 @@ def ensure_model_config():
         shutil.copy2(template_path, config_path)
 
 
+DATASET_REPO = "dwzhu/PaperBananaBench"
+DATASET_ARCHIVE = "PaperBananaBench.zip"
+DATASET_ROOT = "PaperBananaBench"
+
+
+def dataset_task_dir(task_name: str) -> Path:
+    return PROJECT_ROOT / "data" / DATASET_ROOT / task_name
+
+
+def task_dir_usable(task_dir: Path) -> bool:
+    """Whether an extracted task directory is complete enough to retrieve from.
+
+    One definition, shared by the download short-circuit and the extraction's
+    keep-or-replace decision. Two copies of this that must agree is how a
+    half-populated directory ends up surviving forever.
+    """
+    return (task_dir / "ref.json").exists() and (task_dir / "images").is_dir()
+
+
+def _reference_image_names(task_dir: Path) -> set[str]:
+    """Basenames ``ref.json`` and ``test.json`` point at under ``images/``."""
+    names: set[str] = set()
+    for filename in ("ref.json", "test.json"):
+        path = task_dir / filename
+        if not path.is_file():
+            continue
+        try:
+            entries = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            relative = entry.get("path_to_gt_image")
+            if isinstance(relative, str) and relative:
+                names.add(Path(relative).name)
+    return names
+
+
+def align_reference_image_names(task_dir: Path) -> None:
+    """Rename CP437-mojibake images so ``path_to_gt_image`` resolves.
+
+    ``PaperBananaBench.zip`` marks these members as UTF-8, but the stored names
+    are the CP437 decoding of the original UTF-8 bytes. ``ref.json`` and
+    ``test.json`` still use the original Unicode paths, and ``PlannerAgent``
+    opens ``path_to_gt_image`` with no fallback. A file is renamed only when
+    that round-trip produces a missing reference name and nothing is already
+    at the destination.
+    """
+    images_dir = task_dir / "images"
+    if not images_dir.is_dir():
+        return
+    missing = {
+        name for name in _reference_image_names(task_dir)
+        if not (images_dir / name).exists()
+    }
+    if not missing:
+        return
+    for image in list(images_dir.iterdir()):
+        if not image.is_file():
+            continue
+        try:
+            repaired = image.name.encode("cp437").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if repaired not in missing:
+            continue
+        target = images_dir / repaired
+        if target.exists():
+            continue
+        image.rename(target)
+        missing.discard(repaired)
+
+
 def ensure_dataset(task_name: str):
-    """Download PaperBananaBench data from HuggingFace if not present locally."""
-    data_dir = PROJECT_ROOT / "data" / "PaperBananaBench" / task_name
-    ref_path = data_dir / "ref.json"
-    images_dir = data_dir / "images"
-    if ref_path.exists() and images_dir.exists():
+    """Download PaperBananaBench data from HuggingFace if not present locally.
+
+    The dataset is published as a single ``PaperBananaBench.zip``, not as a
+    per-task directory tree, so ``allow_patterns=["<task>/*"]`` matched no files
+    and nothing was ever downloaded. The archive's internal root is
+    ``PaperBananaBench/``, so extracting it into ``data/`` produces exactly the
+    ``data/PaperBananaBench/<task>/ref.json`` and ``.../images/`` layout the
+    Retriever and Planner already expect. A few diagram filenames in the
+    published zip are CP437 mojibake of the Unicode ``path_to_gt_image`` values;
+    those are renamed so the paths resolve.
+    """
+    task_dir = dataset_task_dir(task_name)
+    if task_dir_usable(task_dir):
+        align_reference_image_names(task_dir)
         return
     try:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import hf_hub_download
     except ImportError:
         print("ERROR: huggingface_hub is required for automatic dataset download.\n"
               "Install it with: pip install huggingface_hub", file=sys.stderr)
         sys.exit(1)
-    print(f"Downloading PaperBananaBench/{task_name} from HuggingFace...")
-    snapshot_download(
-        "dwzhu/PaperBananaBench",
-        repo_type="dataset",
-        allow_patterns=[f"{task_name}/*"],
-        local_dir=str(PROJECT_ROOT / "data" / "PaperBananaBench"),
-    )
+
+    data_root = PROJECT_ROOT / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading {DATASET_ARCHIVE} from HuggingFace...")
+
+    with tempfile.TemporaryDirectory(dir=str(data_root)) as staging:
+        staging = Path(staging)
+        archive = hf_hub_download(
+            DATASET_REPO,
+            DATASET_ARCHIVE,
+            repo_type="dataset",
+            local_dir=str(staging / "download"),
+        )
+        # Extract into staging and move into place, so an interrupted or corrupt
+        # extraction cannot leave a tree that satisfies the presence check above
+        # and silently disables retrieval on every later run.
+        extracted = staging / "extracted"
+        with zipfile.ZipFile(archive) as archive_file:
+            archive_file.extractall(extracted)
+
+        source = extracted / DATASET_ROOT
+        if not (source / task_name / "ref.json").exists():
+            raise RuntimeError(
+                f"{DATASET_ARCHIVE} did not contain {DATASET_ROOT}/{task_name}/ref.json; "
+                "the archive layout has changed and ensure_dataset needs updating"
+            )
+
+        destination = data_root / DATASET_ROOT
+        superseded = staging / "superseded"
+        for entry in source.iterdir():
+            target = destination / entry.name
+            if target.exists():
+                # Keep what is already usable; replace what is not. Skipping on
+                # mere existence strands a half-populated task directory: it
+                # never satisfies task_dir_usable, so every later run downloads
+                # and extracts the archive again and then discards the complete
+                # copy it just produced.
+                if target.is_dir() and task_dir_usable(target):
+                    continue
+                superseded.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), str(superseded / entry.name))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(entry), str(target))
+
+        for child in destination.iterdir():
+            if child.is_dir():
+                align_reference_image_names(child)
 
 
 def extract_final_image_b64(result: dict, exp_mode: str) -> str | None:
@@ -138,7 +282,7 @@ async def run(args):
             "caption": args.caption,
             "content": content,
             "visual_intent": args.caption,
-            "additional_info": {"rounded_ratio": args.aspect_ratio},
+            "additional_info": build_additional_info(args),
             "max_critic_rounds": args.max_critic_rounds,
         })
 
@@ -185,7 +329,8 @@ async def run(args):
         print(p)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI surface, separated from main() so it can be exercised in tests."""
     parser = argparse.ArgumentParser(
         description="PaperBanana Skill: generate academic diagrams/plots from text"
     )
@@ -203,6 +348,11 @@ def main():
     parser.add_argument("--aspect-ratio", type=str, default="21:9",
                         choices=["21:9", "16:9", "3:2"],
                         help="Aspect ratio (default: 21:9)")
+    parser.add_argument("--figure-size", type=str, default=None,
+                        choices=FIGURE_SIZE_CHOICES,
+                        help="Target figure width. Selects the provider image-size "
+                             "tier (see FIGURE_SIZE_TO_IMAGE_SIZE). Omitted, the "
+                             "provider default applies, as before.")
     parser.add_argument("--max-critic-rounds", type=int, default=3,
                         help="Max critic refinement rounds (default: 3)")
     parser.add_argument("--num-candidates", type=int, default=10,
@@ -220,7 +370,11 @@ def main():
                         choices=["demo_full", "demo_planner_critic"],
                         help="Pipeline mode: demo_full (Retriever+Planner+Stylist+Visualizer+Critic) or demo_planner_critic (Retriever+Planner+Visualizer+Critic, no Stylist) (default: demo_full)")
 
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
     asyncio.run(run(args))
 
 
