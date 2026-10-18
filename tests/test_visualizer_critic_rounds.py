@@ -25,12 +25,15 @@ def _agent(tmp_path, max_critic_rounds=3):
     return VisualizerAgent(exp_config=exp_config)
 
 
-def _critic_data(rounds=5, max_critic_rounds=None):
+_OMIT = object()
+
+
+def _critic_data(rounds=5, max_critic_rounds=_OMIT):
     data = {
         f"target_diagram_critic_desc{round_idx}": f"desc-{round_idx}"
         for round_idx in range(rounds)
     }
-    if max_critic_rounds is not None:
+    if max_critic_rounds is not _OMIT:
         data["max_critic_rounds"] = max_critic_rounds
     return data
 
@@ -92,3 +95,55 @@ def test_sample_max_of_three_matches_historical_limit(tmp_path):
 
     assert _rendered_rounds(result) == [0, 1, 2]
     assert calls == 3
+
+
+def test_zero_sample_renders_no_critic_rounds(tmp_path):
+    result, calls = _render(
+        _agent(tmp_path, max_critic_rounds=5),
+        _critic_data(max_critic_rounds=0),
+    )
+
+    assert _rendered_rounds(result) == []
+    assert calls == 0
+
+
+def test_negative_sample_clamps_to_zero(tmp_path):
+    result, calls = _render(
+        _agent(tmp_path, max_critic_rounds=5),
+        _critic_data(max_critic_rounds=-2),
+    )
+
+    assert _rendered_rounds(result) == []
+    assert calls == 0
+
+
+def test_none_sample_uses_config_instead_of_default_three(tmp_path):
+    result, calls = _render(
+        _agent(tmp_path, max_critic_rounds=5),
+        _critic_data(max_critic_rounds=None),
+    )
+
+    assert _rendered_rounds(result) == [0, 1, 2, 3, 4]
+    assert calls == 5
+
+
+def test_blank_and_non_numeric_samples_fall_through_to_config(tmp_path):
+    for sample_value in ("", "five"):
+        result, calls = _render(
+            _agent(tmp_path, max_critic_rounds=5),
+            _critic_data(max_critic_rounds=sample_value),
+        )
+
+        assert _rendered_rounds(result) == [0, 1, 2, 3, 4], sample_value
+        assert calls == 5
+
+
+def test_integer_string_sample_is_honored(tmp_path):
+    result, calls = _render(
+        _agent(tmp_path, max_critic_rounds=5),
+        _critic_data(max_critic_rounds="4"),
+    )
+
+    assert _rendered_rounds(result) == [0, 1, 2, 3]
+    assert calls == 4
+    assert "target_diagram_critic_desc4_base64_jpg" not in result

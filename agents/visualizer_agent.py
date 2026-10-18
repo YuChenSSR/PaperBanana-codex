@@ -22,6 +22,7 @@ from google.genai import types
 import asyncio
 
 from utils import generation_utils, image_utils
+from utils.critic_rounds import resolve_max_critic_rounds
 from utils.legacy_generation_options import image_size_from_data
 from utils.plot_execution import execute_plot_code_worker
 from .base_agent import BaseAgent
@@ -86,14 +87,13 @@ class VisualizerAgent(BaseAgent):
             if key in data and f"{key}_base64_jpg" not in data:
                 desc_keys_to_process.append(key)
         
-        # Sample override, then ExpConfig, then the historical default of 3.
-        configured_rounds = getattr(self.exp_config, "max_critic_rounds", None)
-        if configured_rounds is None:
-            configured_rounds = 3
-        max_critic_rounds = data.get("max_critic_rounds", configured_rounds)
-        if max_critic_rounds is None:
-            max_critic_rounds = 3
-        for round_idx in range(int(max_critic_rounds)):
+        # Sample value when it is int-like, else ExpConfig, else 3.
+        # None, blank, and non-numeric values are unset and fall through.
+        max_critic_rounds = resolve_max_critic_rounds(
+            data.get("max_critic_rounds"),
+            getattr(self.exp_config, "max_critic_rounds", None),
+        )
+        for round_idx in range(max_critic_rounds):
             key = f"target_{task_name}_critic_desc{round_idx}"
             if key in data and f"{key}_base64_jpg" not in data:
                 critic_suggestions_key = f"target_{task_name}_critic_suggestions{round_idx}"

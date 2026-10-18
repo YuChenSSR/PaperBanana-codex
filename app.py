@@ -65,6 +65,7 @@ from utils.legacy_generation_options import (
     generation_additional_info,
     normalize_legacy_input_content,
 )
+from utils.image_utils import encode_refine_image_as_jpeg
 from utils.legacy_ui_results import build_evolution_stages, resolve_final_output
 from utils.paperviz_processor import PaperVizProcessor
 
@@ -102,29 +103,6 @@ def base64_to_image(b64_str):
         return Image.open(BytesIO(base64.b64decode(b64_str)))
     except Exception:
         return None
-
-
-def encode_refine_image_as_jpeg(pil_img):
-    """Encode an uploaded image as JPEG, compositing alpha over white.
-
-    JPEG has no alpha channel, so saving an RGBA or palette PNG directly
-    raises. Composite any alpha over white first so transparent pixels
-    become white instead of keeping their raw RGB values.
-    """
-    image = pil_img
-    if image.mode == "P":
-        image = image.convert("RGBA")
-    if image.mode in ("RGBA", "LA"):
-        rgba = image.convert("RGBA")
-        background = Image.new("RGB", rgba.size, (255, 255, 255))
-        background.paste(rgba, mask=rgba.getchannel("A"))
-        image = background
-    elif image.mode != "RGB":
-        image = image.convert("RGB")
-
-    buf = BytesIO()
-    image.save(buf, format="JPEG")
-    return buf.getvalue()
 
 
 def create_sample_inputs(

@@ -4,10 +4,11 @@ RGBA and palette PNGs cannot be saved as JPEG until alpha is composited.
 """
 
 from io import BytesIO
+from pathlib import Path
 
 from PIL import Image
 
-from app import encode_refine_image_as_jpeg
+from utils.image_utils import encode_refine_image_as_jpeg
 
 
 def _center_pixel(jpeg_bytes, xy):
@@ -59,6 +60,15 @@ def test_partial_alpha_is_blended_over_white():
     jpeg_bytes = encode_refine_image_as_jpeg(image)
     # 128/255 black over white is mid-gray, not the raw black RGB.
     _assert_close(_center_pixel(jpeg_bytes, (8, 8)), (127, 127, 127), tol=3)
+
+
+def test_gradio_and_streamlit_refine_use_the_shared_encoder():
+    root = Path(__file__).resolve().parents[1]
+    app_source = (root / "app.py").read_text(encoding="utf-8")
+    demo_source = (root / "demo.py").read_text(encoding="utf-8")
+    assert "encode_refine_image_as_jpeg(pil_img)" in app_source
+    assert "encode_refine_image_as_jpeg(uploaded_image)" in demo_source
+    assert "uploaded_image.save" not in demo_source
 
 
 def test_rgb_upload_still_encodes_as_jpeg():

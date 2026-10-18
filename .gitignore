@@ -7,5 +7,7 @@ results/
 
 # Secrets / environment files
 .env
+.env.*
 *.env
+configs/*.local.yaml
 configs/secrets*.yaml
