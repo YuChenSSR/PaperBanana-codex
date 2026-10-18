@@ -25,6 +25,26 @@ from typing import Literal
 from utils.legacy_generation_options import is_plot_task
 
 
+def style_guide_filename_for_task(task_name: str) -> str:
+    """NeurIPS 2025 style-guide filename for a diagram or plot task.
+
+    Task naming reuses ``is_plot_task`` so aliases such as ``plots`` resolve
+    the same way as ``ExpConfig.task_name``.
+    """
+    task = "plot" if is_plot_task(task_name) else "diagram"
+    return f"neurips2025_{task}_style_guide.md"
+
+
+def style_guide_path_for_task(work_dir: Path, task_name: str) -> Path:
+    return Path(work_dir) / "style_guides" / style_guide_filename_for_task(task_name)
+
+
+def load_style_guide_for_task(work_dir: Path, task_name: str) -> str:
+    """Load the task-specific style guide shared by Stylist, Polish, and Critic."""
+    with open(style_guide_path_for_task(work_dir, task_name), "r", encoding="utf-8") as f:
+        return f.read()
+
+
 @dataclass
 class ExpConfig:
     """Experiment configuration"""
