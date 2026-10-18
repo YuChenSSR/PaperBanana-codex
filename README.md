@@ -80,7 +80,7 @@ Note that if you need to generate many candidates simultaneously, you will requi
     ```
 
 ### Step4: Downloading the Dataset
-Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) from the Hugging Face Hub into `data/PaperBananaBench/`. For direct use, the alternative is `load_dataset("dwzhu/PaperBananaBench", "diagram")` (or `"plot"`), with splits `"test"` and `"ref"`. That alternative needs `pip install datasets`. The framework is designed to function gracefully without the dataset by bypassing the Retriever Agent's few-shot learning capability. If interested in the original PDFs, please download them from [PaperBananaDiagramPDFs](https://huggingface.co/datasets/dwzhu/PaperBananaDiagramPDFs).
+Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) from the Hugging Face Hub into `data/PaperBananaBench/`. For direct use, the alternative is `load_dataset("dwzhu/PaperBananaBench", "diagram")` (or `"plot"`), with splits `"test"` and `"ref"`. That alternative needs `pip install datasets`. Although the framework is designed to run without the dataset (by bypassing the Retriever Agent's few-shot learning), we recommend downloading it, since its examples better guide the framework to generate figures that meet your requirements. If interested in the original PDFs, please download them from [PaperBananaDiagramPDFs](https://huggingface.co/datasets/dwzhu/PaperBananaDiagramPDFs).
 
 ### Usage Tips
 
