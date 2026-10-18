@@ -679,7 +679,9 @@ def build_app():
                     method_text, caption_text, pipe_mode, task_name, ret_setting,
                     n_cands, ar, max_rounds, m_model, img_model,
                     figure_size, save_results,
-                    progress=gr.Progress(track_tqdm=True),
+                    # Batch tqdm would replace per-stage fractions (snap to 0,
+                    # then hit 1.0 before "Saving results").
+                    progress=gr.Progress(track_tqdm=False),
                 ):
                     if not method_text or not caption_text:
                         raise gr.Error("Please provide both method content and caption.")

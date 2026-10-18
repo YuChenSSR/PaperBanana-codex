@@ -17,8 +17,6 @@ Processing pipeline of PaperVizAgent
 """
 
 import asyncio
-import time
-from collections import Counter
 from typing import List, Dict, Any, AsyncGenerator, Callable, Optional
 
 import numpy as np
@@ -104,8 +102,9 @@ class ProgressTracker:
     Each candidate has its own stage list, sized from that candidate's critic
     rounds. Overall progress is completed stages divided by the sum of those
     lists, so one candidate's shorter schedule cannot fill the bar while
-    another candidate still has rounds left. Negative candidate ids are ignored
-    and do not affect the active-stage vote or completion counts.
+    another candidate still has rounds left. Negative candidate ids are ignored.
+    The label is the earliest stage that still has unfinished work among
+    candidates that have not finished, and it never moves backward.
     """
 
     def __init__(
@@ -120,8 +119,8 @@ class ProgressTracker:
             self._expected[candidate_id] = list(stages)
 
         self._completed: Dict[Any, set] = {cid: set() for cid in self._expected}
-        self._candidate_stages: Dict[Any, str] = {}
         self._stage_done: Dict[str, int] = {}
+        self._stage_models: Dict[str, str] = {}
         ordered: List[str] = []
         seen = set()
         for stages in self._expected.values():
@@ -131,8 +130,7 @@ class ProgressTracker:
                     ordered.append(stage)
                     self._stage_done[stage] = 0
         self.stages = ordered
-        self._current_stage_start = time.monotonic()
-        self._active_stage = ordered[0] if ordered else ""
+        self._active_stage = ""
         self._active_model = ""
         self._callback = callback
 
@@ -147,7 +145,7 @@ class ProgressTracker:
         """Build a tracker from every candidate's own critic-round budget.
 
         The batch index is the tracking id. A payload ``candidate_id`` of -1
-        is not used, so a mock-mode sentinel cannot join the stage vote.
+        is not used, so a mock-mode sentinel cannot affect the label.
         """
         candidate_stages: Dict[int, List[str]] = {}
         for index, data in enumerate(data_list):
@@ -163,14 +161,11 @@ class ProgressTracker:
         """Record that a candidate has entered ``stage``."""
         if _is_placeholder_candidate_id(candidate_id) or candidate_id not in self._expected:
             return
-        self._candidate_stages[candidate_id] = stage
+        if stage not in self._expected[candidate_id]:
+            return
         if model_name:
-            self._active_model = model_name
-        if self._candidate_stages:
-            chosen = self._most_common_stage()
-            if chosen != self._active_stage:
-                self._active_stage = chosen
-                self._current_stage_start = time.monotonic()
+            self._stage_models[stage] = model_name
+        self._refresh_label()
         self._notify()
 
     def _stage_rank(self, stage: str) -> int:
@@ -179,16 +174,41 @@ class ProgressTracker:
         except ValueError:
             return -1
 
-    def _most_common_stage(self) -> str:
-        """Most common current stage. Ties resolve to the later pipeline stage.
+    def _candidate_finished(self, candidate_id: Any) -> bool:
+        expected = self._expected.get(candidate_id, [])
+        if not expected:
+            return True
+        return set(expected) <= self._completed[candidate_id]
 
-        Equal counts would otherwise stick on whichever stage was entered
-        first, hiding a candidate that is already on a later critic round.
+    def _earliest_unfinished_stage(self) -> Optional[str]:
+        """Earliest incomplete stage among candidates that are still running.
+
+        Finished and early-stopped candidates are omitted so a stale stage
+        cannot pin the label.
         """
-        counts = Counter(self._candidate_stages.values())
-        top_count = max(counts.values())
-        tied = [stage for stage, count in counts.items() if count == top_count]
-        return max(tied, key=self._stage_rank)
+        best: Optional[str] = None
+        best_rank: Optional[int] = None
+        for candidate_id, stages in self._expected.items():
+            if self._candidate_finished(candidate_id):
+                continue
+            for stage in stages:
+                if stage in self._completed[candidate_id]:
+                    continue
+                rank = self._stage_rank(stage)
+                if best_rank is None or rank < best_rank:
+                    best = stage
+                    best_rank = rank
+                break
+        return best
+
+    def _refresh_label(self) -> None:
+        chosen = self._earliest_unfinished_stage()
+        if chosen is None:
+            return
+        if self._active_stage and self._stage_rank(chosen) < self._stage_rank(self._active_stage):
+            chosen = self._active_stage
+        self._active_stage = chosen
+        self._active_model = self._stage_models.get(chosen, "")
 
     def complete_stage(self, candidate_id: Any, stage: str) -> None:
         """Record that a candidate finished ``stage``. Repeated calls are ignored."""
@@ -200,11 +220,11 @@ class ProgressTracker:
             return
         self._completed[candidate_id].add(stage)
         self._stage_done[stage] = self._stage_done.get(stage, 0) + 1
+        self._refresh_label()
         self._notify()
 
     def get_status(self) -> Dict[str, Any]:
         """Status dict consumed by the Gradio progress callback."""
-        elapsed = time.monotonic() - self._current_stage_start
         completed_steps = sum(len(done) for done in self._completed.values())
         total_steps = sum(len(stages) for stages in self._expected.values())
         overall_pct = completed_steps / total_steps if total_steps else 0.0
@@ -214,7 +234,6 @@ class ProgressTracker:
         return {
             "stage": self._active_stage,
             "model": self._active_model,
-            "elapsed": int(elapsed),
             "stage_done": self._stage_done.get(self._active_stage, 0),
             "total": expected_for_stage,
             "overall_pct": min(overall_pct, 1.0),

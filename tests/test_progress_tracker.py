@@ -61,6 +61,8 @@ def test_negative_placeholder_ids_do_not_affect_stage_counts():
     assert events == []
     assert -1 not in tracker.expected_stages
 
+    tracker.enter_stage(0, "Retriever", "retriever-model")
+    tracker.complete_stage(0, "Retriever")
     tracker.enter_stage(0, "Planner", "real-model")
     tracker.enter_stage(-1, "Retriever", "sentinel-model")
     tracker.complete_stage(-1, "Planner")
@@ -68,21 +70,67 @@ def test_negative_placeholder_ids_do_not_affect_stage_counts():
 
     assert status["stage"] == "Planner"
     assert status["model"] == "real-model"
-    assert status["overall_pct"] == 0
+    assert "elapsed" not in status
+    assert status["overall_pct"] == 0.5
     assert status["stage_done"] == 0
-    assert status["all_stage_done"]["Retriever"] == 0
+    assert status["all_stage_done"]["Retriever"] == 1
 
 
-def test_tied_stages_prefer_the_later_pipeline_stage():
+def test_label_does_not_move_backward_to_an_earlier_stage():
+    """A fast candidate on Critic R0 must not pull the label past unfinished work."""
+    stages = ["Retriever", "Planner", "Visualizer", "Critic R0"]
+    seen = []
     tracker = ProgressTracker(
-        {
-            0: pipeline_stages("demo_planner_critic", 1),
-            1: pipeline_stages("demo_planner_critic", 2),
-        }
+        {0: stages, 1: list(stages), 2: list(stages)},
+        callback=lambda status: seen.append(status["stage"]),
     )
-    tracker.enter_stage(0, "Visualizer (R0)")
-    tracker.enter_stage(1, "Critic R1")
-    assert tracker.get_status()["stage"] == "Critic R1"
+    for cid in (0, 1):
+        for stage in stages[:-1]:
+            tracker.enter_stage(cid, stage, "text-model")
+            tracker.complete_stage(cid, stage)
+        tracker.enter_stage(cid, "Critic R0", "critic-model")
+    tracker.enter_stage(2, "Retriever", "retriever-model")
+    tracker.complete_stage(2, "Retriever")
+    tracker.enter_stage(2, "Planner", "planner-model")
+
+    assert tracker.get_status()["stage"] == "Planner"
+    assert tracker.get_status()["model"] == "planner-model"
+    assert "Critic R0" not in seen
+    ranks = [stages.index(stage) for stage in seen]
+    assert ranks == sorted(ranks)
+
+
+def test_early_stopped_candidate_does_not_keep_a_stale_stage():
+    stages = ["Retriever", "Planner", "Visualizer", "Critic R0", "Visualizer (R0)"]
+    seen = []
+    tracker = ProgressTracker(
+        {0: stages, 1: list(stages)},
+        callback=lambda status: seen.append((status["stage"], status["model"])),
+    )
+    tracker.enter_stage(0, "Retriever", "retriever-model")
+    tracker.complete_stage(0, "Retriever")
+    tracker.enter_stage(0, "Planner", "planner-model")
+
+    for stage, model in (
+        ("Retriever", "retriever-model"),
+        ("Planner", "planner-model"),
+        ("Visualizer", "image-model"),
+    ):
+        tracker.enter_stage(1, stage, model)
+        tracker.complete_stage(1, stage)
+    tracker.enter_stage(1, "Critic R0", "critic-model")
+    tracker.complete_stage(1, "Critic R0")
+    # Early stop: the visualizer round is skipped and this candidate is done.
+    tracker.complete_stage(1, "Visualizer (R0)")
+
+    status = tracker.get_status()
+    assert status["stage"] == "Planner"
+    assert status["model"] == "planner-model"
+    assert "elapsed" not in status
+    ranks = [stages.index(stage) for stage, _model in seen]
+    assert ranks == sorted(ranks)
+    assert all(model != "critic-model" or stage == "Critic R0" for stage, model in seen)
+    assert ("Planner", "critic-model") not in seen
 
 
 def test_overall_progress_uses_each_candidates_critic_rounds():
@@ -465,6 +513,117 @@ def test_process_parallel_candidates_forwards_progress_callback(monkeypatch):
     assert seen["callback"] is callback
     assert seen["do_eval"] is False
     assert seen["max_concurrent"] == 10
+
+
+def _displayed_fraction(iterables):
+    """Match Gradio's status tracker, which renders the last progress unit."""
+    if not iterables:
+        return None
+    last = iterables[-1]
+    if last.index is not None and last.length:
+        return float(last.index) / float(last.length)
+    if last.progress is None:
+        return None
+    return float(last.progress)
+
+
+def _drive_batch_progress(tmp_path, track_tqdm):
+    """Run the real batch tqdm under a Gradio Progress, as the generate handler does."""
+    import gradio as gr
+    from gradio.context import LocalContext
+
+    class Queue:
+        def __init__(self):
+            self.fractions = []
+
+        def set_progress(self, _event_id, iterables):
+            fraction = _displayed_fraction(iterables)
+            if fraction is not None:
+                self.fractions.append(fraction)
+
+    class Blocks:
+        def __init__(self, queue):
+            self._queue = queue
+
+    class RevisingCritic:
+        async def process(self, data, source="stylist"):
+            round_idx = data["current_critic_round"]
+            data[f"target_diagram_critic_suggestions{round_idx}"] = "Keep revising."
+            data[f"target_diagram_critic_desc{round_idx}"] = "revised"
+            return data
+
+    queue = Queue()
+    progress = gr.Progress(track_tqdm=track_tqdm)
+    processor = _processor(
+        _config(tmp_path, exp_mode="demo_planner_critic", max_critic_rounds=1),
+        RevisingCritic(),
+    )
+
+    blocks_token = LocalContext.blocks.set(Blocks(queue))
+    event_token = LocalContext.event_id.set("progress-test")
+    # Gradio sets this context only when the handler opted into tqdm tracking.
+    progress_token = LocalContext.progress.set(progress if track_tqdm else None)
+
+    def on_stage(status):
+        fraction, desc = generation_progress_update(status)
+        progress(fraction, desc=desc)
+
+    async def run():
+        progress(0, desc="Preparing inputs...")
+        progress(0.1, desc="Generating 2 candidates in parallel...")
+        async for _item in processor.process_queries_batch(
+            [
+                {"candidate_id": 0, "max_critic_rounds": 1},
+                {"candidate_id": 1, "max_critic_rounds": 1},
+            ],
+            max_concurrent=2,
+            do_eval=False,
+            progress_callback=on_stage,
+        ):
+            pass
+        progress(0.9, desc="Saving results...")
+        progress(1.0, desc="Done!")
+
+    try:
+        asyncio.run(run())
+    finally:
+        LocalContext.blocks.reset(blocks_token)
+        LocalContext.event_id.reset(event_token)
+        LocalContext.progress.reset(progress_token)
+    return queue.fractions
+
+
+def test_generate_handler_does_not_let_batch_tqdm_overwrite_stage_fractions(tmp_path):
+    import inspect
+    import tqdm as tqdm_mod
+
+    import app as gradio_app
+
+    source = inspect.getsource(gradio_app.build_app)
+    assert "gr.Progress(track_tqdm=False)" in source
+    assert "gr.Progress(track_tqdm=True)" not in source
+
+    tqdm_cls = tqdm_mod.tqdm
+    original_methods = {
+        name: getattr(tqdm_cls, name)
+        for name in ("__init__", "update", "close", "__exit__", "__iter__")
+    }
+    try:
+        untracked = _drive_batch_progress(tmp_path, track_tqdm=False)
+        assert untracked
+        assert untracked == sorted(untracked)
+        assert untracked[0] == 0
+        assert untracked[-1] == 1
+        # The batch counter must not snap the bar back to 0 or finish it early.
+        assert 0.0 not in untracked[1:]
+        assert 1.0 not in untracked[:-1]
+
+        tracked = _drive_batch_progress(tmp_path, track_tqdm=True)
+        assert tracked != sorted(tracked)
+        assert 0.0 in tracked
+    finally:
+        for name, method in original_methods.items():
+            setattr(tqdm_cls, name, method)
 
 
 def test_batch_without_progress_callback_keeps_existing_results(tmp_path):
