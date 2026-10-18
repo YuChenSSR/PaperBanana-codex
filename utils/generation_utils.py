@@ -493,6 +493,120 @@ async def call_claude_with_retry_async(
 
     return response_text_list
 
+
+async def _openai_compatible_chat_with_retry(
+    *,
+    client,
+    provider_name,
+    model_name,
+    contents,
+    config,
+    max_attempts,
+    retry_delay,
+    error_context,
+    token_param,
+    log_style,
+):
+    """Shared chat.completions retry loop for OpenAI-compatible providers.
+
+    ``log_style="validation"`` matches the original OpenAI function (fixed
+    delay, validation wording). ``log_style="provider"`` matches OpenRouter
+    and OrcaRouter (exponential backoff capped at 60s, provider wording).
+    Empty-content retries stay on the fixed delay for both styles.
+    """
+    system_prompt = config["system_prompt"]
+    temperature = config["temperature"]
+    candidate_num = config["candidate_num"]
+    token_limit = config["max_completion_tokens"]
+    response_text_list = []
+
+    is_input_valid = False
+    for attempt in range(max_attempts):
+        try:
+            openai_contents = _convert_to_openai_format(contents)
+            first_response = await client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": openai_contents},
+                ],
+                temperature=temperature,
+                **{token_param: token_limit},
+            )
+            content = first_response.choices[0].message.content or ""
+            if not content.strip():
+                print(f"{provider_name} returned empty content, retrying...")
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(retry_delay)
+                continue
+            response_text_list.append(content)
+            is_input_valid = True
+            break
+
+        except Exception as e:
+            error_str = str(e).lower()
+            context_msg = f" for {error_context}" if error_context else ""
+            if log_style == "provider":
+                current_delay = min(retry_delay * (2 ** attempt), 60)
+                print(
+                    f"{provider_name} attempt {attempt + 1} failed{context_msg}: {error_str}. "
+                    f"Retrying in {current_delay}s..."
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(current_delay)
+            else:
+                print(
+                    f"Validation attempt {attempt + 1} failed{context_msg}: {error_str}. Retrying in {retry_delay} seconds..."
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(retry_delay)
+
+    if not is_input_valid:
+        if log_style == "provider":
+            context_msg = f" for {error_context}" if error_context else ""
+            print(f"Error: All {max_attempts} {provider_name} attempts failed{context_msg}.")
+        else:
+            # context_msg is set only on the exception path, matching the
+            # previous OpenAI function when every attempt failed that way.
+            print(
+                f"Error: All {max_attempts} attempts failed to validate the input{context_msg}. Returning errors."
+            )
+        return ["Error"] * candidate_num
+
+    remaining_candidates = candidate_num - 1
+    if remaining_candidates > 0:
+        if log_style != "provider":
+            print(
+                f"Input validated. Now generating remaining {remaining_candidates} candidates..."
+            )
+        valid_openai_contents = _convert_to_openai_format(contents)
+        tasks = [
+            client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": valid_openai_contents},
+                ],
+                temperature=temperature,
+                **{token_param: token_limit},
+            )
+            for _ in range(remaining_candidates)
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, Exception):
+                if log_style == "provider":
+                    print(f"Error generating a subsequent {provider_name} candidate: {res}")
+                else:
+                    print(f"Error generating a subsequent candidate: {res}")
+                response_text_list.append("Error")
+            else:
+                response_text_list.append(res.choices[0].message.content or "Error")
+
+    return response_text_list
+
+
 async def call_openai_with_retry_async(
     model_name,
     contents,
@@ -511,94 +625,24 @@ async def call_openai_with_retry_async(
     if client is None:
         raise RuntimeError(f"{provider_name} client is not initialized")
 
-    system_prompt = config["system_prompt"]
-    temperature = config["temperature"]
-    candidate_num = config["candidate_num"]
     # Ollama's OpenAI-compatible API ignores max_completion_tokens.
-    token_limit = config["max_completion_tokens"]
-    token_kw = (
+    token_param = (
         "max_tokens"
         if provider_name in ("Local OpenAI-compatible", "Ollama")
         else "max_completion_tokens"
     )
-    response_text_list = []
-
-    # --- Preparation Phase ---
-    # Convert to the OpenAI-specific format
-    current_contents = contents
-
-    # --- Validation and Remediation Phase ---
-    # We loop until we get a single successful response, proving the input is valid.
-    is_input_valid = False
-    for attempt in range(max_attempts):
-        try:
-            openai_contents = _convert_to_openai_format(current_contents)
-            # Attempt to generate the very first candidate.
-            first_response = await client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": openai_contents}
-                ],
-                temperature=temperature,
-                **{token_kw: token_limit},
-            )
-            # If we reach here, the input is valid.
-            content = first_response.choices[0].message.content or ""
-            if not content.strip():
-                print(f"{provider_name} returned empty content, retrying...")
-                if attempt < max_attempts - 1:
-                    await asyncio.sleep(retry_delay)
-                continue
-            response_text_list.append(content)
-            is_input_valid = True
-            break  # Exit the validation loop
-
-        except Exception as e:
-            error_str = str(e).lower()
-            context_msg = f" for {error_context}" if error_context else ""
-            print(
-                f"Validation attempt {attempt + 1} failed{context_msg}: {error_str}. Retrying in {retry_delay} seconds..."
-            )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(retry_delay)
-
-    # --- Sampling Phase ---
-    if not is_input_valid:
-        print(
-            f"Error: All {max_attempts} attempts failed to validate the input{context_msg}. Returning errors."
-        )
-        return ["Error"] * candidate_num
-
-    # We already have 1 successful candidate, now generate the rest.
-    remaining_candidates = candidate_num - 1
-    if remaining_candidates > 0:
-        print(
-            f"Input validated. Now generating remaining {remaining_candidates} candidates..."
-        )
-        valid_openai_contents = _convert_to_openai_format(current_contents)
-        tasks = [
-            client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": valid_openai_contents}
-                ],
-                temperature=temperature,
-                **{token_kw: token_limit},
-            )
-            for _ in range(remaining_candidates)
-        ]
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for res in results:
-            if isinstance(res, Exception):
-                print(f"Error generating a subsequent candidate: {res}")
-                response_text_list.append("Error")
-            else:
-                response_text_list.append(res.choices[0].message.content or "Error")
-
-    return response_text_list
+    return await _openai_compatible_chat_with_retry(
+        client=client,
+        provider_name=provider_name,
+        model_name=model_name,
+        contents=contents,
+        config=config,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+        token_param=token_param,
+        log_style="validation",
+    )
 
 
 async def call_openai_image_generation_with_retry_async(
@@ -655,91 +699,248 @@ async def call_openai_image_generation_with_retry_async(
     return ["Error"]
 
 
+def _qualify_slash_model_id(model_name: str) -> str:
+    """Prefix bare Gemini model names with ``google/``.
+
+    Router-style APIs require ids like ``google/gemini-3-pro-preview``.
+    Names that already contain ``/`` are left alone, as are non-Gemini names.
+    """
+    if "/" in model_name:
+        return model_name
+    if model_name.startswith("gemini"):
+        return f"google/{model_name}"
+    return model_name
+
+
+def _to_orcarouter_model_id(model_name: str) -> str:
+    """Convert a bare model name to OrcaRouter format (provider/model).
+
+    OrcaRouter requires model IDs like 'google/gemini-3-pro-preview'.
+    If the name already contains '/', assume it's already qualified.
+    Otherwise, prefix with 'google/' for Gemini models.
+    """
+    return _qualify_slash_model_id(model_name)
+
+
+def _to_openrouter_model_id(model_name: str) -> str:
+    """Convert a bare model name to OpenRouter format (provider/model).
+
+    OpenRouter requires model IDs like 'google/gemini-3-pro-preview'.
+    If the name already contains '/', assume it's already qualified.
+    Otherwise, prefix with 'google/' for Gemini models.
+    """
+    return _qualify_slash_model_id(model_name)
+
+
+async def _call_router_text_with_retry_async(
+    *,
+    provider_name,
+    client,
+    missing_key_message,
+    qualify_model_id,
+    model_name,
+    contents,
+    config,
+    max_attempts,
+    retry_delay,
+    error_context,
+):
+    if client is None:
+        raise RuntimeError(missing_key_message)
+    return await _openai_compatible_chat_with_retry(
+        client=client,
+        provider_name=provider_name,
+        model_name=qualify_model_id(model_name),
+        contents=contents,
+        config=config,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+        token_param="max_completion_tokens",
+        log_style="provider",
+    )
+
+
 async def call_openrouter_with_retry_async(
     model_name, contents, config, max_attempts=5, retry_delay=30, error_context=""
 ):
     """
     ASYNC: Call OpenRouter API (OpenAI-compatible) with asynchronous retry logic.
     """
-    if openrouter_client is None:
-        raise RuntimeError(
+    return await _call_router_text_with_retry_async(
+        provider_name="OpenRouter",
+        client=openrouter_client,
+        missing_key_message=(
             "OpenRouter client was not initialized: missing API key. "
             "Please set OPENROUTER_API_KEY in environment, or configure "
             "api_keys.openrouter_api_key in configs/model_config.yaml."
-        )
+        ),
+        qualify_model_id=_to_openrouter_model_id,
+        model_name=model_name,
+        contents=contents,
+        config=config,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+    )
 
-    model_name = _to_openrouter_model_id(model_name)
-    system_prompt = config["system_prompt"]
-    temperature = config["temperature"]
-    candidate_num = config["candidate_num"]
-    max_completion_tokens = config["max_completion_tokens"]
-    response_text_list = []
 
-    current_contents = contents
+async def call_orcarouter_with_retry_async(
+    model_name, contents, config, max_attempts=5, retry_delay=30, error_context=""
+):
+    """
+    ASYNC: Call OrcaRouter API (OpenAI-compatible) with asynchronous retry logic.
+    """
+    return await _call_router_text_with_retry_async(
+        provider_name="OrcaRouter",
+        client=orcarouter_client,
+        missing_key_message=(
+            "OrcaRouter client was not initialized: missing API key. "
+            "Please set ORCAROUTER_API_KEY in environment, or configure "
+            "api_keys.orcarouter_api_key in configs/model_config.yaml."
+        ),
+        qualify_model_id=_to_orcarouter_model_id,
+        model_name=model_name,
+        contents=contents,
+        config=config,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+    )
 
-    is_input_valid = False
+
+def _image_b64_from_router_message(message: Dict[str, Any]):
+    """Pull the first base64 image out of a router chat response message."""
+    content = message.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and "inline_data" in part:
+                b64_data = part["inline_data"].get("data", "")
+                if b64_data:
+                    return b64_data
+
+    images = message.get("images")
+    if images and len(images) > 0:
+        img_item = images[0]
+        if isinstance(img_item, dict):
+            data_url = img_item.get("image_url", {}).get("url", "")
+        else:
+            data_url = str(img_item)
+        if "," in data_url:
+            b64_data = data_url.split(",", 1)[1]
+        else:
+            b64_data = data_url
+        if b64_data:
+            return b64_data
+
+    if isinstance(content, str) and content.startswith("data:image"):
+        if "," in content:
+            b64_data = content.split(",", 1)[1]
+            if b64_data:
+                return b64_data
+    return None
+
+
+async def _router_image_generation_with_retry(
+    *,
+    provider_name,
+    api_key,
+    endpoint,
+    model_name,
+    contents,
+    config,
+    max_attempts,
+    retry_delay,
+    error_context,
+):
+    """POST a router-style image chat completion and return base64 images.
+
+    OpenRouter and OrcaRouter share this path, including the direct httpx POST
+    (the OpenAI SDK's extra_body handling drops the model field).
+    """
+    system_prompt = config.get("system_prompt", "")
+    temperature = config.get("temperature", 1.0)
+    aspect_ratio = config.get("aspect_ratio", "1:1")
+    image_size = config.get("image_size", "1k")
+    openai_contents = _convert_to_openai_format(contents)
+
+    image_config = {}
+    if aspect_ratio:
+        image_config["aspect_ratio"] = aspect_ratio
+    if image_size:
+        image_config["image_size"] = image_size
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": openai_contents},
+        ],
+        "temperature": temperature,
+        "modalities": ["image", "text"],
+    }
+    if image_config:
+        payload["image_config"] = image_config
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
     for attempt in range(max_attempts):
         try:
-            openai_contents = _convert_to_openai_format(current_contents)
-            first_response = await openrouter_client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": openai_contents},
-                ],
-                temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
-            )
-            content = first_response.choices[0].message.content or ""
-            if not content.strip():
-                print(f"OpenRouter returned empty content, retrying...")
+            async with httpx.AsyncClient(timeout=300) as client:
+                resp = await client.post(endpoint, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+            choices = data.get("choices", [])
+            if not choices:
+                print(
+                    f"[Warning]: {provider_name} image generation returned no choices, retrying..."
+                )
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(retry_delay)
                 continue
-            response_text_list.append(content)
-            is_input_valid = True
-            break
 
-        except Exception as e:
-            error_str = str(e).lower()
+            b64_data = _image_b64_from_router_message(choices[0].get("message", {}))
+            if b64_data:
+                return [b64_data]
+
+            print(
+                f"[Warning]: {provider_name} image generation returned no images, retrying..."
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(retry_delay)
+            continue
+
+        except httpx.HTTPStatusError as e:
             context_msg = f" for {error_context}" if error_context else ""
             current_delay = min(retry_delay * (2 ** attempt), 60)
             print(
-                f"OpenRouter attempt {attempt + 1} failed{context_msg}: {error_str}. "
+                f"{provider_name} image gen attempt {attempt + 1} failed{context_msg}: "
+                f"HTTP {e.response.status_code} - {e.response.text}. "
                 f"Retrying in {current_delay}s..."
             )
             if attempt < max_attempts - 1:
                 await asyncio.sleep(current_delay)
-
-    if not is_input_valid:
-        context_msg = f" for {error_context}" if error_context else ""
-        print(f"Error: All {max_attempts} OpenRouter attempts failed{context_msg}.")
-        return ["Error"] * candidate_num
-
-    remaining_candidates = candidate_num - 1
-    if remaining_candidates > 0:
-        valid_openai_contents = _convert_to_openai_format(current_contents)
-        tasks = [
-            openrouter_client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": valid_openai_contents},
-                ],
-                temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
-            )
-            for _ in range(remaining_candidates)
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for res in results:
-            if isinstance(res, Exception):
-                print(f"Error generating a subsequent OpenRouter candidate: {res}")
-                response_text_list.append("Error")
             else:
-                response_text_list.append(res.choices[0].message.content or "Error")
+                print(f"Error: All {max_attempts} attempts failed{context_msg}")
+                return ["Error"]
+        except Exception as e:
+            context_msg = f" for {error_context}" if error_context else ""
+            current_delay = min(retry_delay * (2 ** attempt), 60)
+            print(
+                f"{provider_name} image gen attempt {attempt + 1} failed{context_msg}: {e}. "
+                f"Retrying in {current_delay}s..."
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(current_delay)
+            else:
+                print(f"Error: All {max_attempts} attempts failed{context_msg}")
+                return ["Error"]
 
-    return response_text_list
+    return ["Error"]
 
 
 async def call_openrouter_image_generation_with_retry_async(
@@ -755,208 +956,17 @@ async def call_openrouter_image_generation_with_retry_async(
         raise RuntimeError(
             "OpenRouter client was not initialized: missing API key."
         )
-
-    system_prompt = config.get("system_prompt", "")
-    temperature = config.get("temperature", 1.0)
-    aspect_ratio = config.get("aspect_ratio", "1:1")
-    image_size = config.get("image_size", "1k")
-
-    model_name = _to_openrouter_model_id(model_name)
-    openai_contents = _convert_to_openai_format(contents)
-
-    image_config = {}
-    if aspect_ratio:
-        image_config["aspect_ratio"] = aspect_ratio
-    if image_size:
-        image_config["image_size"] = image_size
-
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": openai_contents},
-        ],
-        "temperature": temperature,
-        "modalities": ["image", "text"],
-    }
-    if image_config:
-        payload["image_config"] = image_config
-
-    headers = {
-        "Authorization": f"Bearer {openrouter_api_key}",
-        "Content-Type": "application/json",
-    }
-
-    for attempt in range(max_attempts):
-        try:
-            async with httpx.AsyncClient(timeout=300) as client:
-                resp = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-            resp.raise_for_status()
-            data = resp.json()
-
-            choices = data.get("choices", [])
-            if not choices:
-                print(f"[Warning]: OpenRouter image generation returned no choices, retrying...")
-                if attempt < max_attempts - 1:
-                    await asyncio.sleep(retry_delay)
-                continue
-
-            message = choices[0].get("message", {})
-
-            # Try extracting from inline_data in content (Gemini-style)
-            content = message.get("content")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and "inline_data" in part:
-                        b64_data = part["inline_data"].get("data", "")
-                        if b64_data:
-                            return [b64_data]
-
-            # Try extracting from images field (OpenRouter standard)
-            images = message.get("images")
-            if images and len(images) > 0:
-                img_item = images[0]
-                if isinstance(img_item, dict):
-                    data_url = img_item.get("image_url", {}).get("url", "")
-                else:
-                    data_url = str(img_item)
-                if "," in data_url:
-                    b64_data = data_url.split(",", 1)[1]
-                else:
-                    b64_data = data_url
-                if b64_data:
-                    return [b64_data]
-
-            # Try extracting base64 from text content
-            if isinstance(content, str) and content.startswith("data:image"):
-                if "," in content:
-                    b64_data = content.split(",", 1)[1]
-                    if b64_data:
-                        return [b64_data]
-
-            print(f"[Warning]: OpenRouter image generation returned no images, retrying...")
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(retry_delay)
-            continue
-
-        except httpx.HTTPStatusError as e:
-            context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
-            print(
-                f"OpenRouter image gen attempt {attempt + 1} failed{context_msg}: "
-                f"HTTP {e.response.status_code} - {e.response.text}. "
-                f"Retrying in {current_delay}s..."
-            )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(current_delay)
-            else:
-                print(f"Error: All {max_attempts} attempts failed{context_msg}")
-                return ["Error"]
-        except Exception as e:
-            context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
-            print(
-                f"OpenRouter image gen attempt {attempt + 1} failed{context_msg}: {e}. "
-                f"Retrying in {current_delay}s..."
-            )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(current_delay)
-            else:
-                print(f"Error: All {max_attempts} attempts failed{context_msg}")
-                return ["Error"]
-
-    return ["Error"]
-
-
-async def call_orcarouter_with_retry_async(
-    model_name, contents, config, max_attempts=5, retry_delay=30, error_context=""
-):
-    """
-    ASYNC: Call OrcaRouter API (OpenAI-compatible) with asynchronous retry logic.
-    """
-    if orcarouter_client is None:
-        raise RuntimeError(
-            "OrcaRouter client was not initialized: missing API key. "
-            "Please set ORCAROUTER_API_KEY in environment, or configure "
-            "api_keys.orcarouter_api_key in configs/model_config.yaml."
-        )
-
-    model_name = _to_orcarouter_model_id(model_name)
-    system_prompt = config["system_prompt"]
-    temperature = config["temperature"]
-    candidate_num = config["candidate_num"]
-    max_completion_tokens = config["max_completion_tokens"]
-    response_text_list = []
-
-    current_contents = contents
-
-    is_input_valid = False
-    for attempt in range(max_attempts):
-        try:
-            openai_contents = _convert_to_openai_format(current_contents)
-            first_response = await orcarouter_client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": openai_contents},
-                ],
-                temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
-            )
-            content = first_response.choices[0].message.content or ""
-            if not content.strip():
-                print(f"OrcaRouter returned empty content, retrying...")
-                if attempt < max_attempts - 1:
-                    await asyncio.sleep(retry_delay)
-                continue
-            response_text_list.append(content)
-            is_input_valid = True
-            break
-
-        except Exception as e:
-            error_str = str(e).lower()
-            context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
-            print(
-                f"OrcaRouter attempt {attempt + 1} failed{context_msg}: {error_str}. "
-                f"Retrying in {current_delay}s..."
-            )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(current_delay)
-
-    if not is_input_valid:
-        context_msg = f" for {error_context}" if error_context else ""
-        print(f"Error: All {max_attempts} OrcaRouter attempts failed{context_msg}.")
-        return ["Error"] * candidate_num
-
-    remaining_candidates = candidate_num - 1
-    if remaining_candidates > 0:
-        valid_openai_contents = _convert_to_openai_format(current_contents)
-        tasks = [
-            orcarouter_client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": valid_openai_contents},
-                ],
-                temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
-            )
-            for _ in range(remaining_candidates)
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for res in results:
-            if isinstance(res, Exception):
-                print(f"Error generating a subsequent OrcaRouter candidate: {res}")
-                response_text_list.append("Error")
-            else:
-                response_text_list.append(res.choices[0].message.content or "Error")
-
-    return response_text_list
+    return await _router_image_generation_with_retry(
+        provider_name="OpenRouter",
+        api_key=openrouter_api_key,
+        endpoint="https://openrouter.ai/api/v1/chat/completions",
+        model_name=_to_openrouter_model_id(model_name),
+        contents=contents,
+        config=config,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+    )
 
 
 async def call_orcarouter_image_generation_with_retry_async(
@@ -972,149 +982,95 @@ async def call_orcarouter_image_generation_with_retry_async(
         raise RuntimeError(
             "OrcaRouter client was not initialized: missing API key."
         )
+    return await _router_image_generation_with_retry(
+        provider_name="OrcaRouter",
+        api_key=orcarouter_api_key,
+        endpoint="https://api.orcarouter.ai/v1/chat/completions",
+        model_name=_to_orcarouter_model_id(model_name),
+        contents=contents,
+        config=config,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+    )
 
-    system_prompt = config.get("system_prompt", "")
-    temperature = config.get("temperature", 1.0)
-    aspect_ratio = config.get("aspect_ratio", "1:1")
-    image_size = config.get("image_size", "1k")
 
-    model_name = _to_orcarouter_model_id(model_name)
-    openai_contents = _convert_to_openai_format(contents)
+async def dispatch_image_generation(
+    model_name,
+    *,
+    prompt,
+    contents,
+    system_prompt,
+    temperature,
+    aspect_ratio,
+    image_size,
+    gemini_config_args,
+    include_gpt_image=True,
+    include_orcarouter=True,
+    gpt_image_prompt_limit=None,
+    max_attempts=5,
+    retry_delay=30,
+):
+    """Dispatch one image generation the way the diagram agents do.
 
-    image_config = {}
-    if aspect_ratio:
-        image_config["aspect_ratio"] = aspect_ratio
-    if image_size:
-        image_config["image_size"] = image_size
+    Priority when enabled: a ``gpt-image`` model name, then an initialized
+    OpenRouter client, then an initialized OrcaRouter client, then Gemini.
+    Callers keep ``assert_not_local_openai_image_model`` so the text-only
+    rejection stays at the agent boundary. Polish leaves out gpt-image and
+    OrcaRouter because it historically only chose OpenRouter or Gemini.
+    """
+    if include_gpt_image and "gpt-image" in model_name:
+        image_prompt = prompt
+        if gpt_image_prompt_limit is not None:
+            image_prompt = prompt[:gpt_image_prompt_limit]
+        return await call_openai_image_generation_with_retry_async(
+            model_name=model_name,
+            prompt=image_prompt,
+            config={
+                "size": "1536x1024",
+                "quality": "high",
+                "background": "opaque",
+                "output_format": "png",
+            },
+            max_attempts=max_attempts,
+            retry_delay=retry_delay,
+        )
 
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": openai_contents},
-        ],
+    router_config = {
+        "system_prompt": system_prompt,
         "temperature": temperature,
-        "modalities": ["image", "text"],
+        "aspect_ratio": aspect_ratio,
+        "image_size": image_size,
     }
-    if image_config:
-        payload["image_config"] = image_config
+    if openrouter_client is not None:
+        return await call_openrouter_image_generation_with_retry_async(
+            model_name=model_name,
+            contents=contents,
+            config=router_config,
+            max_attempts=max_attempts,
+            retry_delay=retry_delay,
+        )
+    if include_orcarouter and orcarouter_client is not None:
+        return await call_orcarouter_image_generation_with_retry_async(
+            model_name=model_name,
+            contents=contents,
+            config=router_config,
+            max_attempts=max_attempts,
+            retry_delay=retry_delay,
+        )
 
-    headers = {
-        "Authorization": f"Bearer {orcarouter_api_key}",
-        "Content-Type": "application/json",
-    }
-
-    for attempt in range(max_attempts):
-        try:
-            async with httpx.AsyncClient(timeout=300) as client:
-                resp = await client.post(
-                    "https://api.orcarouter.ai/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-            resp.raise_for_status()
-            data = resp.json()
-
-            choices = data.get("choices", [])
-            if not choices:
-                print(f"[Warning]: OrcaRouter image generation returned no choices, retrying...")
-                if attempt < max_attempts - 1:
-                    await asyncio.sleep(retry_delay)
-                continue
-
-            message = choices[0].get("message", {})
-
-            # Try extracting from inline_data in content (Gemini-style)
-            content = message.get("content")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and "inline_data" in part:
-                        b64_data = part["inline_data"].get("data", "")
-                        if b64_data:
-                            return [b64_data]
-
-            # Try extracting from images field (OpenRouter standard)
-            images = message.get("images")
-            if images and len(images) > 0:
-                img_item = images[0]
-                if isinstance(img_item, dict):
-                    data_url = img_item.get("image_url", {}).get("url", "")
-                else:
-                    data_url = str(img_item)
-                if "," in data_url:
-                    b64_data = data_url.split(",", 1)[1]
-                else:
-                    b64_data = data_url
-                if b64_data:
-                    return [b64_data]
-
-            # Try extracting base64 from text content
-            if isinstance(content, str) and content.startswith("data:image"):
-                if "," in content:
-                    b64_data = content.split(",", 1)[1]
-                    if b64_data:
-                        return [b64_data]
-
-            print(f"[Warning]: OrcaRouter image generation returned no images, retrying...")
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(retry_delay)
-            continue
-
-        except httpx.HTTPStatusError as e:
-            context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
-            print(
-                f"OrcaRouter image gen attempt {attempt + 1} failed{context_msg}: "
-                f"HTTP {e.response.status_code} - {e.response.text}. "
-                f"Retrying in {current_delay}s..."
-            )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(current_delay)
-            else:
-                print(f"Error: All {max_attempts} attempts failed{context_msg}")
-                return ["Error"]
-        except Exception as e:
-            context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
-            print(
-                f"OrcaRouter image gen attempt {attempt + 1} failed{context_msg}: {e}. "
-                f"Retrying in {current_delay}s..."
-            )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(current_delay)
-            else:
-                print(f"Error: All {max_attempts} attempts failed{context_msg}")
-                return ["Error"]
-
-    return ["Error"]
-
-
-def _to_orcarouter_model_id(model_name: str) -> str:
-    """Convert a bare model name to OrcaRouter format (provider/model).
-
-    OrcaRouter requires model IDs like 'google/gemini-3-pro-preview'.
-    If the name already contains '/', assume it's already qualified.
-    Otherwise, prefix with 'google/' for Gemini models.
-    """
-    if "/" in model_name:
-        return model_name
-    if model_name.startswith("gemini"):
-        return f"google/{model_name}"
-    return model_name
-
-
-def _to_openrouter_model_id(model_name: str) -> str:
-    """Convert a bare model name to OpenRouter format (provider/model).
-
-    OpenRouter requires model IDs like 'google/gemini-3-pro-preview'.
-    If the name already contains '/', assume it's already qualified.
-    Otherwise, prefix with 'google/' for Gemini models.
-    """
-    if "/" in model_name:
-        return model_name
-    if model_name.startswith("gemini"):
-        return f"google/{model_name}"
-    return model_name
+    gemini_config_args["response_modalities"] = ["IMAGE"]
+    gemini_config_args["image_config"] = types.ImageConfig(
+        aspect_ratio=aspect_ratio,
+        image_size=image_size,
+    )
+    return await call_gemini_with_retry_async(
+        model_name=model_name,
+        contents=contents,
+        config=types.GenerateContentConfig(**gemini_config_args),
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+    )
 
 
 async def call_model_with_retry_async(
