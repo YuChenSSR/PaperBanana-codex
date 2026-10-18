@@ -296,6 +296,9 @@ Thanks to all contributors who helped improve PaperBanana, whether through code,
       <td align="center" valign="top" width="16.66%"><a href="https://www.linkedin.com/in/trent-leslie/"><img src="https://avatars.githubusercontent.com/u/1095657?v=4?s=100" width="100px;" alt="trentleslie"/><br /><sub><b>trentleslie</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/commits?author=trentleslie" title="Code">💻</a></td>
       <td align="center" valign="top" width="16.66%"><a href="https://github.com/jdotc1"><img src="https://avatars.githubusercontent.com/u/138259519?v=4?s=100" width="100px;" alt="Jeff"/><br /><sub><b>Jeff</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/commits?author=jdotc1" title="Code">💻</a></td>
     </tr>
+    <tr>
+      <td align="center" valign="top" width="16.66%"><a href="https://github.com/XiaoHuo888-hue"><img src="https://avatars.githubusercontent.com/u/315183888?v=4?s=100" width="100px;" alt="XiaoHuo888-hue"/><br /><sub><b>XiaoHuo888-hue</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/commits?author=XiaoHuo888-hue" title="Code">💻</a></td>
+    </tr>
   </tbody>
 </table>
 
