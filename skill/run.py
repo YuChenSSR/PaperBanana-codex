@@ -30,6 +30,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from utils.critic_rounds import critic_round_indexes  # noqa: E402
 from utils.legacy_generation_options import (  # noqa: E402
     FIGURE_SIZE_TO_IMAGE_SIZE,
     generation_additional_info,
@@ -243,11 +244,12 @@ def extract_final_image_b64(result: dict, exp_mode: str) -> str | None:
     Follows the same fallback order as demo.py:display_candidate_result.
     """
     task_name = "diagram"
+    prefix = f"target_{task_name}"
 
-    # Try critic rounds 3 → 0
-    for round_idx in range(3, -1, -1):
-        key = f"target_{task_name}_critic_desc{round_idx}_base64_jpg"
-        if key in result and result[key]:
+    # Highest available critic image, including rounds past the old 0–3 cap.
+    for round_idx in reversed(critic_round_indexes(result, prefix)):
+        key = f"{prefix}_critic_desc{round_idx}_base64_jpg"
+        if result.get(key):
             return result[key]
 
     # Fallback: stylist (demo_full) or planner
