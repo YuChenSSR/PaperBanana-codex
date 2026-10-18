@@ -259,6 +259,16 @@
       "contributions": [
         "ideas"
       ]
+    },
+    {
+      "login": "camwolford",
+      "name": "Campbell Wolford",
+      "avatar_url": "https://avatars.githubusercontent.com/u/140654638?v=4",
+      "profile": "https://camwolford.github.io/",
+      "contributions": [
+        "ideas",
+        "bug"
+      ]
     }
   ],
   "commitType": "docs"
