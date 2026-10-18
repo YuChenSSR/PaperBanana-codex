@@ -66,7 +66,7 @@ from utils.legacy_generation_options import (
     normalize_legacy_input_content,
 )
 from utils.legacy_ui_results import build_evolution_stages, resolve_final_output
-from utils.paperviz_processor import PaperVizProcessor
+from utils.paperviz_processor import PaperVizProcessor, generation_progress_update
 
 model_config_data = {}
 if config_path.exists():
@@ -135,6 +135,7 @@ def create_sample_inputs(
 async def process_parallel_candidates(
     data_list, exp_mode="dev_planner_critic", retrieval_setting="auto",
     main_model_name="", image_gen_model_name="", task_name="diagram",
+    progress_callback=None,
 ):
     task_name = "plot" if "plot" in (task_name or "").lower() else "diagram"
     exp_config = config.ExpConfig(
@@ -158,7 +159,12 @@ async def process_parallel_candidates(
         polish_agent=PolishAgent(exp_config=exp_config),
     )
     results = []
-    async for result_data in processor.process_queries_batch(data_list, max_concurrent=10, do_eval=False):
+    async for result_data in processor.process_queries_batch(
+        data_list,
+        max_concurrent=10,
+        do_eval=False,
+        progress_callback=progress_callback,
+    ):
         result_data["task_name"] = task_name
         results.append(result_data)
     return results
@@ -682,6 +688,11 @@ def build_app():
                     max_rounds = int(max_rounds)
                     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+                    # Per-stage progress across candidates. Adapted from #56 by @noking-xdj.
+                    def _progress_cb(status):
+                        fraction, desc = generation_progress_update(status)
+                        progress(fraction, desc=desc)
+
                     progress(0, desc="Preparing inputs...")
                     input_data = create_sample_inputs(
                         method_content=method_text, caption=caption_text,
@@ -698,6 +709,7 @@ def build_app():
                                 input_data, exp_mode=pipe_mode, retrieval_setting=ret_setting,
                                 main_model_name=m_model, image_gen_model_name=img_model,
                                 task_name=task_name,
+                                progress_callback=_progress_cb,
                             )
                         )
                         loop.close()
