@@ -103,7 +103,11 @@ class PolishAgent(BaseAgent):
         """
         cfg = self.task_config
         task_name = cfg["task_name"]
-        
+        generation_utils.assert_not_local_openai_image_model(
+            self.image_gen_model_name,
+            route_name="polish image generation",
+        )
+
         # Get GT image path and resolve relative path
         gt_image_path_rel = data.get("path_to_gt_image")
         if not gt_image_path_rel:
