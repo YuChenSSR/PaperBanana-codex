@@ -26,3 +26,7 @@ api_keys:
   anthropic_api_key: ""
   openrouter_api_key: "" # e.g. "sk-or-v1-xxxxx". Set model_name to "openrouter/<model>" to use.
   orcarouter_api_key: "" # e.g. "sk-orca-xxxxx". Set model_name to "orcarouter/<model>" to use.
+  atlascloud_api_key: "" # Set model_name to "atlas/<model>" to use Atlas Cloud.
+
+base_urls:
+  atlascloud_base_url: "https://api.atlascloud.ai/v1"
