@@ -294,6 +294,7 @@ Thanks to all contributors who helped improve PaperBanana, whether through code,
       <td align="center" valign="top" width="16.66%"><a href="https://github.com/onepercentLI"><img src="https://avatars.githubusercontent.com/u/17852986?v=4?s=100" width="100px;" alt="LiJingfei"/><br /><sub><b>LiJingfei</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/issues?q=author%3AonepercentLI" title="Bug reports">🐛</a></td>
       <td align="center" valign="top" width="16.66%"><a href="https://github.com/Konjac-XZ"><img src="https://avatars.githubusercontent.com/u/71483384?v=4?s=100" width="100px;" alt="Konjac-XZ"/><br /><sub><b>Konjac-XZ</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/issues?q=author%3AKonjac-XZ" title="Bug reports">🐛</a></td>
       <td align="center" valign="top" width="16.66%"><a href="https://www.linkedin.com/in/trent-leslie/"><img src="https://avatars.githubusercontent.com/u/1095657?v=4?s=100" width="100px;" alt="trentleslie"/><br /><sub><b>trentleslie</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/commits?author=trentleslie" title="Code">💻</a></td>
+      <td align="center" valign="top" width="16.66%"><a href="https://github.com/jdotc1"><img src="https://avatars.githubusercontent.com/u/138259519?v=4?s=100" width="100px;" alt="Jeff"/><br /><sub><b>Jeff</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/commits?author=jdotc1" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
