@@ -214,6 +214,24 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "trentleslie",
+      "name": "trentleslie",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1095657?v=4",
+      "profile": "https://www.linkedin.com/in/trent-leslie/",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "jdotc1",
+      "name": "Jeff",
+      "avatar_url": "https://avatars.githubusercontent.com/u/138259519?v=4",
+      "profile": "https://github.com/jdotc1",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "commitType": "docs"
