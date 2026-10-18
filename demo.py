@@ -179,7 +179,8 @@ async def process_parallel_candidates(
     
     # Process all candidates in parallel (concurrency controlled by processor)
     results = []
-    concurrent_num = max(1, min(int(max_concurrent), len(data_list)))
+    # Never forward a non-positive limit; an empty batch still uses 1.
+    concurrent_num = max(1, min(int(max_concurrent), len(data_list) or 1))
     
     async for result_data in processor.process_queries_batch(
         data_list, max_concurrent=concurrent_num, do_eval=False
@@ -408,9 +409,14 @@ def infer_timestamp_from_filename(file_path: Path) -> str:
         return raw
 
 
+def demo_results_directory() -> Path:
+    """Directory where this demo writes and reloads JSON result files."""
+    return Path(__file__).parent / "results" / "demo"
+
+
 def list_saved_result_files(results_dir: Path | None = None) -> list[Path]:
     """List JSON files previously saved by this demo, newest filename first."""
-    directory = Path(__file__).parent / "results" / "demo" if results_dir is None else Path(results_dir)
+    directory = demo_results_directory() if results_dir is None else Path(results_dir)
     if not directory.is_dir():
         return []
     return sorted(directory.glob("demo_*.json"), key=lambda path: path.name, reverse=True)
@@ -428,6 +434,19 @@ def _saved_text(value) -> str:
         return str(value)
 
 
+def _resolved_saved_result_path(file_path: Path) -> Path:
+    """Resolve a result path and reject anything that leaves results/demo.
+
+    ``Path.resolve()`` follows symlinks, so a ``demo_*.json`` link whose
+    target sits outside the save directory is rejected before it is opened.
+    """
+    resolved = Path(file_path).resolve()
+    allowed_root = demo_results_directory().resolve()
+    if resolved == allowed_root or not resolved.is_relative_to(allowed_root):
+        raise ValueError("Saved result file must stay under results/demo.")
+    return resolved
+
+
 def load_saved_results(file_path: Path):
     """Load saved results from disk.
 
@@ -435,9 +454,12 @@ def load_saved_results(file_path: Path):
     accepted so older wrapped files can be reopened without changing the
     current save format.
     """
-    file_path = Path(file_path)
-    with open(file_path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
+    resolved = _resolved_saved_result_path(file_path)
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Saved JSON is not valid: {exc.msg}") from exc
 
     if isinstance(payload, list):
         results = payload
@@ -450,14 +472,14 @@ def load_saved_results(file_path: Path):
     else:
         raise ValueError("Saved JSON must be a list or an object with 'results'.")
 
-    if not isinstance(results, list):
-        raise ValueError("Saved results payload has invalid format.")
+    if not isinstance(results, list) or any(not isinstance(item, dict) for item in results):
+        raise ValueError("Saved results must be a list of objects.")
 
     exp_mode = metadata.get("exp_mode") or infer_exp_mode_from_results(results)
-    timestamp = metadata.get("timestamp") or infer_timestamp_from_filename(file_path)
+    timestamp = metadata.get("timestamp") or infer_timestamp_from_filename(resolved)
     method_content = metadata.get("method_content")
     caption = metadata.get("caption")
-    if results and isinstance(results[0], dict):
+    if results:
         first = results[0]
         if method_content is None:
             method_content = first.get("content", "")
@@ -470,7 +492,7 @@ def load_saved_results(file_path: Path):
         "timestamp": timestamp,
         "method_content": _saved_text(method_content),
         "caption": _saved_text(caption),
-        "json_file": str(file_path.resolve()),
+        "json_file": str(resolved),
     }
 
 
@@ -639,6 +661,10 @@ def main():
                         st.session_state["json_file"] = loaded["json_file"]
                         st.session_state["method_content"] = loaded["method_content"]
                         st.session_state["caption"] = loaded["caption"]
+                        # Clear these before the example widgets are created so
+                        # the restored text is shown instead of the built-in example.
+                        st.session_state["method_example_selector"] = "None"
+                        st.session_state["caption_example_selector"] = "None"
                         st.success(f"Loaded {selected_path.name}")
                         st.rerun()
                     except Exception as e:
