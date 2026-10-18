@@ -82,6 +82,10 @@ Note that if you need to generate many candidates simultaneously, you will requi
 ### Step4: Downloading the Dataset
 Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) from the Hugging Face Hub into `data/PaperBananaBench/`. For direct use, the alternative is `load_dataset("dwzhu/PaperBananaBench", "diagram")` (or `"plot"`), with splits `"test"` and `"ref"`. That alternative needs `pip install datasets`. The framework is designed to function gracefully without the dataset by bypassing the Retriever Agent's few-shot learning capability. If interested in the original PDFs, please download them from [PaperBananaDiagramPDFs](https://huggingface.co/datasets/dwzhu/PaperBananaDiagramPDFs).
 
+### Usage Tips
+
+**Keep retrieval enabled.** It retrieves reference examples from PaperBananaBench, which lets the system learn the drawing style of those examples and produce better results. Retrieval is already on by default (`auto`) for the CLI (`--retrieval_setting`) and for the Gradio and Streamlit **Retrieval Setting** controls. Leave it at `auto`, and do not set `none`. Prepare the dataset with `python scripts/prepare_bench.py`; if `data/PaperBananaBench/diagram/ref.json` (or `plot/ref.json`) is missing, `auto` falls back to `none`.
+
 ### Launch PaperBanana
 
 #### Option 1: Gradio Web App (Recommended)
@@ -137,13 +141,8 @@ python main.py \
   --dataset_name "PaperBananaBench" \
   --task_name "plot" \
   --split_name "test" \
-  --exp_mode "vanilla" \
-  --retrieval_setting "none"
+  --exp_mode "vanilla"
 ```
-
-## Usage Tips
-
-**Keep retrieval enabled.** It retrieves reference examples from PaperBananaBench, which lets the system learn the drawing style of those examples and produce better results. Retrieval is already on by default (`auto`) for the CLI (`--retrieval_setting`) and for the Gradio and Streamlit **Retrieval Setting** controls. Leave it at `auto`, and do not set `none`. Prepare the dataset with `python scripts/prepare_bench.py`; if `data/PaperBananaBench/diagram/ref.json` (or `plot/ref.json`) is missing, `auto` falls back to `none`.
 
 **Available Options:**
 - `--dataset_name`: Dataset to use (default: `PaperBananaBench`)
@@ -161,7 +160,7 @@ python main.py \
 - `demo_planner_critic`: Demo mode (Retriever → Planner → Visualizer → Critic; no Stylist) without evaluation
 - `demo_full`: Demo mode (full pipeline) without evaluation
 
-## Visualization Tools
+### Visualization Tools
 
 View pipeline evolution and intermediate results:
 ```bash
