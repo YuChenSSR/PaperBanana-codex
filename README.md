@@ -59,10 +59,7 @@ We recommend duplicate the `configs/model_config.template.yaml` file into `confi
 
 Note that if you need to generate many candidates simultaneously, you will require an API key that supports high concurrency.
 
-### Step3: Downloading the Dataset
-Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) from the Hugging Face Hub into `data/PaperBananaBench/`. For direct use, the alternative is `load_dataset("dwzhu/PaperBananaBench", "diagram")` (or `"plot"`), with splits `"test"` and `"ref"`. The framework is designed to function gracefully without the dataset by bypassing the Retriever Agent's few-shot learning capability. If interested in the original PDFs, please download them from [PaperBananaDiagramPDFs](https://huggingface.co/datasets/dwzhu/PaperBananaDiagramPDFs).
-
-### Step4: Installing the Environment
+### Step3: Installing the Environment
 1. We use `uv` to manage Python packages. Please install `uv` following the instructions [here](https://docs.astral.sh/uv/getting-started/installation/).
 
 2. Create and activate a virtual environment
@@ -80,6 +77,9 @@ Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download
     ```bash
     uv pip install -r requirements.txt
     ```
+
+### Step4: Downloading the Dataset
+Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) from the Hugging Face Hub into `data/PaperBananaBench/`. For direct use, the alternative is `load_dataset("dwzhu/PaperBananaBench", "diagram")` (or `"plot"`), with splits `"test"` and `"ref"`. That alternative needs `pip install datasets`. The framework is designed to function gracefully without the dataset by bypassing the Retriever Agent's few-shot learning capability. If interested in the original PDFs, please download them from [PaperBananaDiagramPDFs](https://huggingface.co/datasets/dwzhu/PaperBananaDiagramPDFs).
 
 ### Launch PaperBanana
 
