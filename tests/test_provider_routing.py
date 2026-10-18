@@ -4,6 +4,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
 from agents.vanilla_agent import VanillaAgent
 from agents.visualizer_agent import VisualizerAgent
 from utils import generation_utils
@@ -57,35 +59,17 @@ class ProviderRoutingTests(unittest.IsolatedAsyncioTestCase):
         for name, value in self._saved.items():
             setattr(generation_utils, name, value)
 
-    def test_registry_lists_prefixes_and_text_only_routes(self) -> None:
-        prefixes = []
-        text_only = []
-        for spec in sorted(generation_utils.PROVIDER_SPECS, key=lambda item: item.route_order):
-            prefixes.extend(spec.prefixes)
-            if spec.text_only:
-                text_only.extend(spec.prefixes)
-        for prefix in (
-            "atlas/",
-            "local/",
-            "ollama/",
-            "openrouter/",
-            "orcarouter/",
-            "claude-",
-            "gpt-",
-            "o1-",
-            "o3-",
-            "o4-",
-        ):
-            self.assertIn(prefix, prefixes)
-        self.assertEqual(tuple(text_only), generation_utils._LOCAL_TEXT_PREFIXES)
+    def test_local_text_prefixes_are_the_single_source(self) -> None:
+        self.assertEqual(generation_utils._LOCAL_TEXT_PREFIXES, ("local/", "ollama/"))
+        self.assertTrue(generation_utils.is_local_openai_model_name("local/qwen"))
+        self.assertTrue(generation_utils.is_local_openai_model_name(" Ollama/llama "))
+        self.assertFalse(generation_utils.is_local_openai_model_name("atlas/local/qwen"))
+        self.assertFalse(generation_utils.is_local_openai_model_name("openrouter/llama"))
         self.assertEqual(
             generation_utils._to_openrouter_model_id("gemini-3-pro-preview"),
             generation_utils._to_orcarouter_model_id("gemini-3-pro-preview"),
         )
-        self.assertEqual(
-            generation_utils._to_openrouter_model_id("gpt-5.5"),
-            "gpt-5.5",
-        )
+        self.assertEqual(generation_utils._to_openrouter_model_id("gpt-5.5"), "gpt-5.5")
 
     async def test_explicit_prefixes_win_over_auto_detect(self) -> None:
         generation_utils.openrouter_client = object()
@@ -148,6 +132,13 @@ class ProviderRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_auto_detect_priority_and_model_id_transform(self) -> None:
         config = _text_config()
         contents = [{"type": "text", "text": "hello"}]
+        generation_utils.openrouter_client = object()
+        generation_utils.orcarouter_client = object()
+        generation_utils.gemini_client = object()
+        generation_utils.anthropic_client = object()
+        generation_utils.openai_client = object()
+        # All five clients start enabled. Each step must win, then that client
+        # is removed so the next-lower priority is selected while the rest stay on.
         order = [
             ("openrouter_client", "call_openrouter_with_retry_async", "google/gemini-3-pro-preview"),
             ("orcarouter_client", "call_orcarouter_with_retry_async", "google/gemini-3-pro-preview"),
@@ -157,7 +148,6 @@ class ProviderRoutingTests(unittest.IsolatedAsyncioTestCase):
         ]
         for client_name, fn_name, expected_model in order:
             with self.subTest(client=client_name):
-                setattr(generation_utils, client_name, object())
                 mocks = {
                     "call_openrouter_with_retry_async": AsyncMock(return_value=["openrouter"]),
                     "call_orcarouter_with_retry_async": AsyncMock(return_value=["orcarouter"]),
@@ -181,6 +171,9 @@ class ProviderRoutingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(called.await_args.kwargs["config"], config)
                 else:
                     self.assertIsInstance(called.await_args.kwargs["config"], dict)
+                for other_name, other in mocks.items():
+                    if other_name != fn_name:
+                        other.assert_not_awaited()
                 setattr(generation_utils, client_name, None)
 
         with self.assertRaisesRegex(RuntimeError, "No API client available"):
@@ -397,6 +390,111 @@ class ProviderRoutingTests(unittest.IsolatedAsyncioTestCase):
                     "max_completion_tokens": 8,
                 },
             )
+
+    async def test_router_image_reads_data_image_text_content(self) -> None:
+        generation_utils.openrouter_api_key = "router-key"
+        generation_utils.orcarouter_api_key = "orca-key"
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "images": [],
+                                "content": "data:image/png;base64,REFJ",
+                            }
+                        }
+                    ]
+                }
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, headers=None, json=None):
+                return _Response()
+
+        contents = [{"type": "text", "text": "draw"}]
+        config = {"system_prompt": "", "temperature": 1.0}
+        with patch.object(generation_utils.httpx, "AsyncClient", _Client):
+            openrouter = await generation_utils.call_openrouter_image_generation_with_retry_async(
+                "google/test-image", contents, config, max_attempts=1, retry_delay=0
+            )
+            orca = await generation_utils.call_orcarouter_image_generation_with_retry_async(
+                "google/test-image", contents, config, max_attempts=1, retry_delay=0
+            )
+        self.assertEqual(openrouter, ["REFJ"])
+        self.assertEqual(orca, ["REFJ"])
+
+    async def test_router_image_http_backoff_caps_at_60_seconds(self) -> None:
+        generation_utils.openrouter_api_key = "router-key"
+        attempts = {"n": 0}
+        sleeps = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "images": [
+                                    {"image_url": {"url": "data:image/png;base64,T0s="}}
+                                ]
+                            }
+                        }
+                    ]
+                }
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, headers=None, json=None):
+                attempts["n"] += 1
+                if attempts["n"] < 4:
+                    request = httpx.Request("POST", url)
+                    response = httpx.Response(503, request=request, text="busy")
+                    raise httpx.HTTPStatusError(
+                        "busy", request=request, response=response
+                    )
+                return _Response()
+
+        with patch.object(generation_utils.httpx, "AsyncClient", _Client), patch.object(
+            generation_utils.asyncio, "sleep", new=fake_sleep
+        ):
+            result = await generation_utils.call_openrouter_image_generation_with_retry_async(
+                "google/test-image",
+                [{"type": "text", "text": "draw"}],
+                {"system_prompt": "", "temperature": 1.0},
+                max_attempts=4,
+                retry_delay=40,
+                error_context="img",
+            )
+        self.assertEqual(result, ["T0s="])
+        # 40 * 2**attempt, capped at 60: 40, 60, 60.
+        self.assertEqual(sleeps, [40, 60, 60])
 
     async def test_image_dispatch_priority_and_agent_prompt_limits(self) -> None:
         prompt = "P" * 40000

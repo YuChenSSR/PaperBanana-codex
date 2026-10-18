@@ -13,11 +13,7 @@
 # limitations under the License.
 
 """
-Utility functions for model-provider calls and image generation.
-
-Adding a provider is a ProviderSpec: prefix, client factory, config keys, call
-function, and whether the route is text-only. OpenAI-compatible chat and
-router-style calls share helpers. The public call_* names stay stable.
+Utility functions for interacting with Gemini and Claude APIs, image processing, and PDF handling.
 """
 
 import json
@@ -26,8 +22,7 @@ import base64
 from io import BytesIO
 from functools import partial
 from ast import literal_eval
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import List, Dict, Any
 
 import httpx
 import aiofiles
@@ -144,212 +139,6 @@ def _client_for_local_text(kind: str):
     return client
 
 
-
-@dataclass(frozen=True)
-class ProviderSpec:
-    """Declarative description of one model provider.
-
-    To add a provider, append a spec. OpenAI-compatible providers can point
-    ``call_function`` at ``call_openai_with_retry_async`` (set
-    ``openai_provider_name`` when the call must use that provider's client).
-    Router-style providers point at the shared OpenRouter/OrcaRouter wrappers.
-    """
-
-    key: str
-    initialized_name: str
-    init_message: str
-    client_global: str
-    call_function: str
-    init_order: int
-    route_order: int
-    api_key_config_key: str = ""
-    api_key_env: str = ""
-    api_key_global: Optional[str] = None
-    base_url: Optional[str] = None
-    base_url_config_key: Optional[str] = None
-    base_url_env: Optional[str] = None
-    base_url_default: str = ""
-    rstrip_base_url: bool = False
-    client_factory: Optional[Callable[..., Any]] = None
-    init_mode: str = "api_key"  # "api_key" or "local_text"
-    prefixes: tuple = ()
-    prefix_mode: str = "strip"  # "strip", "keep", or "local"
-    text_only: bool = False
-    empty_model_message: str = ""
-    missing_client_message: str = ""
-    auto_detect_order: Optional[int] = None
-    auto_model_transform: Optional[str] = None
-    openai_provider_name: Optional[str] = None
-    native_config: bool = False
-
-
-def _build_gemini_client(api_key: str, base_url: Optional[str] = None):
-    return genai.Client(api_key=api_key)
-
-
-def _build_anthropic_client(api_key: str, base_url: Optional[str] = None):
-    return AsyncAnthropic(api_key=api_key)
-
-
-def _build_openai_client(api_key: str, base_url: Optional[str] = None):
-    if base_url:
-        return AsyncOpenAI(base_url=base_url, api_key=api_key)
-    return AsyncOpenAI(api_key=api_key)
-
-
-# route_order matches the historical prefix if/elif chain.
-# auto_detect_order matches: OpenRouter > OrcaRouter > Gemini > Anthropic > OpenAI.
-# init_order matches the historical reinitialize_clients sequence.
-PROVIDER_SPECS = (
-    ProviderSpec(
-        key="gemini",
-        initialized_name="Gemini",
-        init_message="Initialized Gemini Client with API Key",
-        client_global="gemini_client",
-        call_function="call_gemini_with_retry_async",
-        init_order=10,
-        route_order=70,
-        api_key_config_key="google_api_key",
-        api_key_env="GOOGLE_API_KEY",
-        client_factory=_build_gemini_client,
-        auto_detect_order=30,
-        native_config=True,
-    ),
-    ProviderSpec(
-        key="anthropic",
-        initialized_name="Anthropic",
-        init_message="Initialized Anthropic Client with API Key",
-        client_global="anthropic_client",
-        call_function="call_claude_with_retry_async",
-        init_order=20,
-        route_order=50,
-        api_key_config_key="anthropic_api_key",
-        api_key_env="ANTHROPIC_API_KEY",
-        client_factory=_build_anthropic_client,
-        prefixes=("claude-",),
-        prefix_mode="keep",
-        auto_detect_order=40,
-    ),
-    ProviderSpec(
-        key="openai",
-        initialized_name="OpenAI",
-        init_message="Initialized OpenAI Client with API Key",
-        client_global="openai_client",
-        call_function="call_openai_with_retry_async",
-        init_order=30,
-        route_order=60,
-        api_key_config_key="openai_api_key",
-        api_key_env="OPENAI_API_KEY",
-        client_factory=_build_openai_client,
-        prefixes=("gpt-", "o1-", "o3-", "o4-"),
-        prefix_mode="keep",
-        auto_detect_order=50,
-    ),
-    ProviderSpec(
-        key="openrouter",
-        initialized_name="OpenRouter",
-        init_message="Initialized OpenRouter Client with API Key",
-        client_global="openrouter_client",
-        call_function="call_openrouter_with_retry_async",
-        init_order=40,
-        route_order=30,
-        api_key_config_key="openrouter_api_key",
-        api_key_env="OPENROUTER_API_KEY",
-        api_key_global="openrouter_api_key",
-        base_url="https://openrouter.ai/api/v1",
-        client_factory=_build_openai_client,
-        prefixes=("openrouter/",),
-        auto_detect_order=10,
-        auto_model_transform="_to_openrouter_model_id",
-    ),
-    ProviderSpec(
-        key="orcarouter",
-        initialized_name="OrcaRouter",
-        init_message="Initialized OrcaRouter Client with API Key",
-        client_global="orcarouter_client",
-        call_function="call_orcarouter_with_retry_async",
-        init_order=50,
-        route_order=40,
-        api_key_config_key="orcarouter_api_key",
-        api_key_env="ORCAROUTER_API_KEY",
-        api_key_global="orcarouter_api_key",
-        base_url="https://api.orcarouter.ai/v1",
-        client_factory=_build_openai_client,
-        prefixes=("orcarouter/",),
-        auto_detect_order=20,
-        auto_model_transform="_to_orcarouter_model_id",
-    ),
-    ProviderSpec(
-        key="atlascloud",
-        initialized_name="Atlas Cloud",
-        init_message="Initialized Atlas Cloud Client with API Key",
-        client_global="atlascloud_client",
-        call_function="call_openai_with_retry_async",
-        init_order=60,
-        route_order=10,
-        api_key_config_key="atlascloud_api_key",
-        api_key_env="ATLASCLOUD_API_KEY",
-        base_url_config_key="atlascloud_base_url",
-        base_url_env="ATLASCLOUD_BASE_URL",
-        base_url_default="https://api.atlascloud.ai/v1",
-        rstrip_base_url=True,
-        client_factory=_build_openai_client,
-        prefixes=("atlas/",),
-        empty_model_message="Atlas Cloud model id cannot be empty",
-        missing_client_message=(
-            "Atlas Cloud client is not initialized. Set ATLASCLOUD_API_KEY "
-            "or configure api_keys.atlascloud_api_key."
-        ),
-        openai_provider_name="Atlas Cloud",
-    ),
-    ProviderSpec(
-        key="local",
-        initialized_name="Local OpenAI-compatible",
-        init_message="Initialized Local OpenAI-compatible Client",
-        client_global="local_openai_client",
-        call_function="call_openai_with_retry_async",
-        init_order=70,
-        route_order=20,
-        init_mode="local_text",
-        prefixes=("local/",),
-        prefix_mode="local",
-        text_only=True,
-        empty_model_message="local model id cannot be empty",
-        openai_provider_name="Local OpenAI-compatible",
-    ),
-    ProviderSpec(
-        key="ollama",
-        initialized_name="Ollama",
-        init_message="Initialized Ollama Client",
-        client_global="ollama_client",
-        call_function="call_openai_with_retry_async",
-        init_order=80,
-        route_order=21,
-        init_mode="local_text",
-        prefixes=("ollama/",),
-        prefix_mode="local",
-        text_only=True,
-        empty_model_message="ollama model id cannot be empty",
-        openai_provider_name="Ollama",
-    ),
-)
-
-
-def _configured_base_url(spec: ProviderSpec) -> Optional[str]:
-    if spec.base_url_config_key:
-        base_url = get_config_val(
-            "base_urls",
-            spec.base_url_config_key,
-            spec.base_url_env or "",
-            spec.base_url_default,
-        )
-    else:
-        base_url = spec.base_url
-    if base_url and spec.rstrip_base_url:
-        return base_url.rstrip("/")
-    return base_url
-
-
 def reinitialize_clients():
     """(Re)build all API clients from current env vars / config file.
 
@@ -358,35 +147,95 @@ def reinitialize_clients():
 
     Returns a list of client names that were successfully initialized.
     """
-    initialized = []
-    for spec in sorted(PROVIDER_SPECS, key=lambda item: item.init_order):
-        if spec.init_mode == "local_text":
-            client = _make_local_text_client(spec.key, require_base_url=False)
-            globals()[spec.client_global] = client
-            if client is not None:
-                print(spec.init_message)
-                initialized.append(spec.initialized_name)
-            continue
+    global gemini_client, anthropic_client, openai_client
+    global openrouter_client, openrouter_api_key
+    global orcarouter_client, orcarouter_api_key
+    global atlascloud_client
+    global local_openai_client, ollama_client
 
-        api_key = get_config_val(
-            "api_keys", spec.api_key_config_key, spec.api_key_env, ""
+    initialized = []
+
+    api_key = get_config_val("api_keys", "google_api_key", "GOOGLE_API_KEY", "")
+    if api_key:
+        gemini_client = genai.Client(api_key=api_key)
+        print("Initialized Gemini Client with API Key")
+        initialized.append("Gemini")
+    else:
+        gemini_client = None
+
+    key = get_config_val("api_keys", "anthropic_api_key", "ANTHROPIC_API_KEY", "")
+    if key:
+        anthropic_client = AsyncAnthropic(api_key=key)
+        print("Initialized Anthropic Client with API Key")
+        initialized.append("Anthropic")
+    else:
+        anthropic_client = None
+
+    key = get_config_val("api_keys", "openai_api_key", "OPENAI_API_KEY", "")
+    if key:
+        openai_client = AsyncOpenAI(api_key=key)
+        print("Initialized OpenAI Client with API Key")
+        initialized.append("OpenAI")
+    else:
+        openai_client = None
+
+    openrouter_api_key = get_config_val("api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", "")
+    if openrouter_api_key:
+        openrouter_client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=openrouter_api_key,
         )
-        if spec.api_key_global:
-            globals()[spec.api_key_global] = api_key
-        if not api_key:
-            globals()[spec.client_global] = None
-            continue
-        globals()[spec.client_global] = spec.client_factory(
-            api_key=api_key,
-            base_url=_configured_base_url(spec),
+        print("Initialized OpenRouter Client with API Key")
+        initialized.append("OpenRouter")
+    else:
+        openrouter_client = None
+
+    orcarouter_api_key = get_config_val("api_keys", "orcarouter_api_key", "ORCAROUTER_API_KEY", "")
+    if orcarouter_api_key:
+        orcarouter_client = AsyncOpenAI(
+            base_url="https://api.orcarouter.ai/v1",
+            api_key=orcarouter_api_key,
         )
-        print(spec.init_message)
-        initialized.append(spec.initialized_name)
+        print("Initialized OrcaRouter Client with API Key")
+        initialized.append("OrcaRouter")
+    else:
+        orcarouter_client = None
+
+    atlascloud_api_key = get_config_val(
+        "api_keys", "atlascloud_api_key", "ATLASCLOUD_API_KEY", ""
+    )
+    if atlascloud_api_key:
+        atlascloud_base_url = get_config_val(
+            "base_urls",
+            "atlascloud_base_url",
+            "ATLASCLOUD_BASE_URL",
+            "https://api.atlascloud.ai/v1",
+        )
+        atlascloud_client = AsyncOpenAI(
+            base_url=atlascloud_base_url.rstrip("/"),
+            api_key=atlascloud_api_key,
+        )
+        print("Initialized Atlas Cloud Client with API Key")
+        initialized.append("Atlas Cloud")
+    else:
+        atlascloud_client = None
+
+    local_openai_client = _make_local_text_client("local", require_base_url=False)
+    if local_openai_client is not None:
+        print("Initialized Local OpenAI-compatible Client")
+        initialized.append("Local OpenAI-compatible")
+
+    ollama_client = _make_local_text_client("ollama", require_base_url=False)
+    if ollama_client is not None:
+        print("Initialized Ollama Client")
+        initialized.append("Ollama")
+
     return initialized
 
 
 # Run once at import time (preserves original behaviour)
 reinitialize_clients()
+
 
 
 def _convert_to_gemini_parts(contents: List[Dict[str, Any]]) -> List[types.Part]:
@@ -644,6 +493,7 @@ async def call_claude_with_retry_async(
 
     return response_text_list
 
+
 async def _openai_compatible_chat_with_retry(
     *,
     client,
@@ -848,6 +698,7 @@ async def call_openai_image_generation_with_retry_async(
 
     return ["Error"]
 
+
 def _qualify_slash_model_id(model_name: str) -> str:
     """Prefix bare Gemini model names with ``google/``.
 
@@ -958,7 +809,7 @@ async def call_orcarouter_with_retry_async(
     )
 
 
-def _image_b64_from_router_message(message: Dict[str, Any]) -> Optional[str]:
+def _image_b64_from_router_message(message: Dict[str, Any]):
     """Pull the first base64 image out of a router chat response message."""
     content = message.get("content")
     if isinstance(content, list):
@@ -1222,91 +1073,6 @@ async def dispatch_image_generation(
     )
 
 
-@dataclass(frozen=True)
-class _ResolvedCall:
-    spec: ProviderSpec
-    model_name: str
-    client: Any = None
-    provider_name: Optional[str] = None
-
-
-def _specs_by(order_attr: str):
-    return sorted(
-        (spec for spec in PROVIDER_SPECS if getattr(spec, order_attr) is not None),
-        key=lambda spec: getattr(spec, order_attr),
-    )
-
-
-def _match_prefix(spec: ProviderSpec, model_name: str) -> Optional[str]:
-    for prefix in spec.prefixes:
-        if model_name.startswith(prefix):
-            if spec.prefix_mode == "keep":
-                return model_name
-            return model_name[len(prefix) :]
-    return None
-
-
-def _explicit_route(model_name: str) -> Optional[_ResolvedCall]:
-    """Resolve an explicit prefix, preserving the historical priority."""
-    for spec in _specs_by("route_order"):
-        if spec.prefix_mode == "local":
-            parsed = _split_local_text_prefix(model_name)
-            if parsed is None or parsed[0] != spec.key:
-                continue
-            actual_model = parsed[1]
-            if not actual_model:
-                raise ValueError(spec.empty_model_message)
-            return _ResolvedCall(
-                spec=spec,
-                model_name=actual_model,
-                client=_client_for_local_text(spec.key),
-                provider_name=spec.openai_provider_name,
-            )
-
-        actual_model = _match_prefix(spec, model_name)
-        if actual_model is None:
-            continue
-        if spec.empty_model_message and not actual_model:
-            raise ValueError(spec.empty_model_message)
-        client = None
-        provider_name = None
-        if spec.openai_provider_name:
-            client = globals()[spec.client_global]
-            if client is None:
-                raise RuntimeError(spec.missing_client_message)
-            provider_name = spec.openai_provider_name
-        return _ResolvedCall(
-            spec=spec,
-            model_name=actual_model,
-            client=client,
-            provider_name=provider_name,
-        )
-    return None
-
-
-def _auto_route(model_name: str) -> _ResolvedCall:
-    for spec in _specs_by("auto_detect_order"):
-        if globals()[spec.client_global] is None:
-            continue
-        actual_model = model_name
-        if spec.auto_model_transform:
-            actual_model = globals()[spec.auto_model_transform](model_name)
-        return _ResolvedCall(spec=spec, model_name=actual_model)
-    raise RuntimeError(
-        "No API client available. Please configure at least one API key "
-        "in configs/model_config.yaml or via environment variables."
-    )
-
-
-def _config_dict_for_non_gemini(config) -> Dict[str, Any]:
-    return {
-        "system_prompt": config.system_instruction if hasattr(config, "system_instruction") else "",
-        "temperature": config.temperature if hasattr(config, "temperature") else 1.0,
-        "candidate_num": config.candidate_count if hasattr(config, "candidate_count") else 1,
-        "max_completion_tokens": config.max_output_tokens if hasattr(config, "max_output_tokens") else 50000,
-    }
-
-
 async def call_model_with_retry_async(
     model_name, contents, config, max_attempts=5, retry_delay=5, error_context=""
 ):
@@ -1322,15 +1088,63 @@ async def call_model_with_retry_async(
       2. No prefix: auto-detect based on which API key is configured.
          Priority: OpenRouter > OrcaRouter > Gemini > Anthropic > OpenAI
     """
-    route = _explicit_route(model_name)
-    if route is None:
-        route = _auto_route(model_name)
+    # Explicit provider prefix overrides auto-detection
+    local_text = _split_local_text_prefix(model_name)
+    local_text_client = None
+    local_text_name = ""
+    if model_name.startswith("atlas/"):
+        provider = "atlascloud"
+        actual_model = model_name[len("atlas/") :]
+        if not actual_model:
+            raise ValueError("Atlas Cloud model id cannot be empty")
+        if atlascloud_client is None:
+            raise RuntimeError(
+                "Atlas Cloud client is not initialized. Set ATLASCLOUD_API_KEY "
+                "or configure api_keys.atlascloud_api_key."
+            )
+    elif local_text is not None:
+        kind, actual_model = local_text
+        if not actual_model:
+            raise ValueError(f"{kind} model id cannot be empty")
+        provider = "local_text"
+        local_text_client = _client_for_local_text(kind)
+        local_text_name = "Ollama" if kind == "ollama" else "Local OpenAI-compatible"
+    elif model_name.startswith("openrouter/"):
+        provider = "openrouter"
+        actual_model = model_name[len("openrouter/"):]
+    elif model_name.startswith("orcarouter/"):
+        provider = "orcarouter"
+        actual_model = model_name[len("orcarouter/"):]
+    elif model_name.startswith("claude-"):
+        provider = "anthropic"
+        actual_model = model_name
+    elif any(model_name.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-")):
+        provider = "openai"
+        actual_model = model_name
+    else:
+        # Auto-detect provider based on which API key is configured
+        actual_model = model_name
+        if openrouter_client is not None:
+            provider = "openrouter"
+            actual_model = _to_openrouter_model_id(model_name)
+        elif orcarouter_client is not None:
+            provider = "orcarouter"
+            actual_model = _to_orcarouter_model_id(model_name)
+        elif gemini_client is not None:
+            provider = "gemini"
+        elif anthropic_client is not None:
+            provider = "anthropic"
+        elif openai_client is not None:
+            provider = "openai"
+        else:
+            raise RuntimeError(
+                "No API client available. Please configure at least one API key "
+                "in configs/model_config.yaml or via environment variables."
+            )
 
-    # Look up the call function at dispatch time so tests can patch it.
-    call_fn = globals()[route.spec.call_function]
-    if route.spec.native_config:
-        return await call_fn(
-            model_name=route.model_name,
+    if provider == "gemini":
+        return await call_gemini_with_retry_async(
+            model_name=actual_model,
             contents=contents,
             config=config,
             max_attempts=max_attempts,
@@ -1338,15 +1152,38 @@ async def call_model_with_retry_async(
             error_context=error_context,
         )
 
-    kwargs = {
-        "model_name": route.model_name,
-        "contents": contents,
-        "config": _config_dict_for_non_gemini(config),
-        "max_attempts": max_attempts,
-        "retry_delay": retry_delay,
-        "error_context": error_context,
+    # Convert Gemini GenerateContentConfig -> dict for OpenAI/Claude/OpenRouter
+    cfg_dict = {
+        "system_prompt": config.system_instruction if hasattr(config, "system_instruction") else "",
+        "temperature": config.temperature if hasattr(config, "temperature") else 1.0,
+        "candidate_num": config.candidate_count if hasattr(config, "candidate_count") else 1,
+        "max_completion_tokens": config.max_output_tokens if hasattr(config, "max_output_tokens") else 50000,
     }
-    if route.provider_name:
-        kwargs["client"] = route.client
-        kwargs["provider_name"] = route.provider_name
-    return await call_fn(**kwargs)
+
+    if provider in ("atlascloud", "local_text"):
+        return await call_openai_with_retry_async(
+            model_name=actual_model,
+            contents=contents,
+            config=cfg_dict,
+            max_attempts=max_attempts,
+            retry_delay=retry_delay,
+            error_context=error_context,
+            client=atlascloud_client if provider == "atlascloud" else local_text_client,
+            provider_name="Atlas Cloud" if provider == "atlascloud" else local_text_name,
+        )
+
+    call_fn = {
+        "openrouter": call_openrouter_with_retry_async,
+        "orcarouter": call_orcarouter_with_retry_async,
+        "anthropic": call_claude_with_retry_async,
+        "openai": call_openai_with_retry_async,
+    }[provider]
+
+    return await call_fn(
+        model_name=actual_model,
+        contents=contents,
+        config=cfg_dict,
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
+        error_context=error_context,
+    )
