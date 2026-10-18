@@ -104,6 +104,29 @@ def base64_to_image(b64_str):
         return None
 
 
+def encode_refine_image_as_jpeg(pil_img):
+    """Encode an uploaded image as JPEG, compositing alpha over white.
+
+    JPEG has no alpha channel, so saving an RGBA or palette PNG directly
+    raises. Composite any alpha over white first so transparent pixels
+    become white instead of keeping their raw RGB values.
+    """
+    image = pil_img
+    if image.mode == "P":
+        image = image.convert("RGBA")
+    if image.mode in ("RGBA", "LA"):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        image = background
+    elif image.mode != "RGB":
+        image = image.convert("RGB")
+
+    buf = BytesIO()
+    image.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
 def create_sample_inputs(
     method_content,
     caption,
@@ -817,9 +840,7 @@ def build_app():
                     if not prompt:
                         raise gr.Error("Please provide edit instructions.")
 
-                    buf = BytesIO()
-                    pil_img.save(buf, format="JPEG")
-                    image_bytes = buf.getvalue()
+                    image_bytes = encode_refine_image_as_jpeg(pil_img)
 
                     loop = asyncio.new_event_loop()
                     try:

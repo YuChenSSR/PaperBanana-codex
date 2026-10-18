@@ -86,7 +86,14 @@ class VisualizerAgent(BaseAgent):
             if key in data and f"{key}_base64_jpg" not in data:
                 desc_keys_to_process.append(key)
         
-        for round_idx in range(3):
+        # Sample override, then ExpConfig, then the historical default of 3.
+        configured_rounds = getattr(self.exp_config, "max_critic_rounds", None)
+        if configured_rounds is None:
+            configured_rounds = 3
+        max_critic_rounds = data.get("max_critic_rounds", configured_rounds)
+        if max_critic_rounds is None:
+            max_critic_rounds = 3
+        for round_idx in range(int(max_critic_rounds)):
             key = f"target_{task_name}_critic_desc{round_idx}"
             if key in data and f"{key}_base64_jpg" not in data:
                 critic_suggestions_key = f"target_{task_name}_critic_suggestions{round_idx}"
