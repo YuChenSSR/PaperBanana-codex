@@ -65,6 +65,7 @@ from utils.legacy_generation_options import (
     generation_additional_info,
     normalize_legacy_input_content,
 )
+from utils.image_utils import encode_refine_image_as_jpeg
 from utils.legacy_ui_results import build_evolution_stages, resolve_final_output
 from utils.paperviz_processor import PaperVizProcessor, generation_progress_update
 
@@ -831,9 +832,7 @@ def build_app():
                     if not prompt:
                         raise gr.Error("Please provide edit instructions.")
 
-                    buf = BytesIO()
-                    pil_img.save(buf, format="JPEG")
-                    image_bytes = buf.getvalue()
+                    image_bytes = encode_refine_image_as_jpeg(pil_img)
 
                     loop = asyncio.new_event_loop()
                     try:

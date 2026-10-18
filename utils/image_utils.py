@@ -44,3 +44,26 @@ def convert_png_b64_to_jpg_b64(png_b64_str: str) -> str:
         print(f"❌ Error converting image: {e}")
         print(f"   Input preview: {png_b64_str[:100] if png_b64_str else 'None'}")
         return None
+
+
+def encode_refine_image_as_jpeg(pil_img) -> bytes:
+    """Encode an uploaded image as JPEG, compositing alpha over white.
+
+    JPEG has no alpha channel, so saving an RGBA or palette PNG directly
+    raises. Composite any alpha over white first so transparent pixels
+    become white instead of keeping their raw RGB values.
+    """
+    image = pil_img
+    if image.mode == "P":
+        image = image.convert("RGBA")
+    if image.mode in ("RGBA", "LA"):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        image = background
+    elif image.mode != "RGB":
+        image = image.convert("RGB")
+
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG")
+    return buf.getvalue()

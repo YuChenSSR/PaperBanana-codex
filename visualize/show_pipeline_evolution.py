@@ -27,6 +27,11 @@ import sys
 
 # Ensure local imports work
 sys.path.append(os.getcwd())
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from utils.critic_rounds import critic_round_indexes  # noqa: E402
 
 st.set_page_config(layout="wide", page_title="PaperVizAgent Pipeline Evolution", page_icon="🍌")
 
@@ -85,18 +90,10 @@ def detect_task_type(item):
         return "plot"
     return "diagram"
 
-def display_stage_comparison(item):
-    """Display 2x2 grid comparison: Ground Truth + three pipeline stages."""
-    st.markdown("### 📊 Pipeline Evolution Comparison")
-    
+def collect_evolution_stages(item):
+    """Stages for one sample, including every available critic round."""
     task_type = detect_task_type(item)
     prefix = "target_plot" if task_type == "plot" else "target_diagram"
-    
-    # Create two rows with two columns each
-    row1_col1, row1_col2 = st.columns(2)
-    row2_col1, row2_col2 = st.columns(2)
-    
-    # Detect available stages dynamically
     available_stages = []
     
     # Human (Ground Truth) - always first
@@ -130,11 +127,11 @@ def display_stage_comparison(item):
             "is_human": False
         })
     
-    # Critic rounds (0, 1, 2)
-    for round_idx in range(3):
+    # Critic rounds that exist, plus any configured max_critic_rounds.
+    for round_idx in critic_round_indexes(item, prefix):
         critic_desc_key = f"{prefix}_critic_desc{round_idx}"
         if critic_desc_key in item:
-            emoji = ["🔍", "🔍🔍", "🔍🔍🔍"][round_idx]
+            emoji = "🔍" * (round_idx + 1)
             available_stages.append({
                 "title": f"{emoji} Critic Round {round_idx}",
                 "desc_key": critic_desc_key,
@@ -144,7 +141,20 @@ def display_stage_comparison(item):
                 "is_human": False,
                 "round_idx": round_idx
             })
-            
+
+    return available_stages
+
+
+def display_stage_comparison(item):
+    """Display 2x2 grid comparison: Ground Truth + three pipeline stages."""
+    st.markdown("### 📊 Pipeline Evolution Comparison")
+
+    # Create two rows with two columns each
+    row1_col1, row1_col2 = st.columns(2)
+    row2_col1, row2_col2 = st.columns(2)
+
+    available_stages = collect_evolution_stages(item)
+
     # Create dynamic grid based on number of stages
     num_stages = len(available_stages)
     cols_per_row = 2
