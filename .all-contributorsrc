@@ -241,6 +241,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "binyangzhu000-sudo",
+      "name": "nb213",
+      "avatar_url": "https://avatars.githubusercontent.com/u/224954946?v=4",
+      "profile": "https://github.com/binyangzhu000-sudo",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "commitType": "docs"
