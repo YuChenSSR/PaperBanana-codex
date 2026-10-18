@@ -23,8 +23,6 @@ import base64
 import json
 import shutil
 import sys
-import tempfile
-import zipfile
 from io import BytesIO
 from pathlib import Path
 
@@ -58,9 +56,9 @@ def ensure_model_config():
         shutil.copy2(template_path, config_path)
 
 
-DATASET_REPO = "dwzhu/PaperBananaBench"
-DATASET_ARCHIVE = "PaperBananaBench.zip"
 DATASET_ROOT = "PaperBananaBench"
+_PREPARE_REPO_ID = "dwzhu/PaperBananaBench"
+_PREPARE_SPLITS = ("test", "ref")
 
 
 def dataset_task_dir(task_name: str) -> Path:
@@ -68,141 +66,175 @@ def dataset_task_dir(task_name: str) -> Path:
 
 
 def task_dir_usable(task_dir: Path) -> bool:
-    """Whether an extracted task directory is complete enough to retrieve from.
+    """Whether a task directory is complete enough to retrieve from.
 
-    One definition, shared by the download short-circuit and the extraction's
-    keep-or-replace decision. Two copies of this that must agree is how a
-    half-populated directory ends up surviving forever.
+    The download short-circuit uses this. ``ref.json`` and ``images/`` are
+    both required, so a half-populated directory is downloaded again.
     """
     return (task_dir / "ref.json").exists() and (task_dir / "images").is_dir()
 
 
-def _reference_image_names(task_dir: Path) -> set[str]:
-    """Basenames ``ref.json`` and ``test.json`` point at under ``images/``."""
-    names: set[str] = set()
-    for filename in ("ref.json", "test.json"):
-        path = task_dir / filename
-        if not path.is_file():
-            continue
-        try:
-            entries = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            relative = entry.get("path_to_gt_image")
-            if isinstance(relative, str) and relative:
-                names.add(Path(relative).name)
-    return names
+def _prepare_script_candidates() -> tuple[Path, ...]:
+    """Where ``prepare`` lives, from a checkout or an installed skill.
 
-
-def align_reference_image_names(task_dir: Path) -> None:
-    """Rename CP437-mojibake images so ``path_to_gt_image`` resolves.
-
-    ``PaperBananaBench.zip`` marks these members as UTF-8, but the stored names
-    are the CP437 decoding of the original UTF-8 bytes. ``ref.json`` and
-    ``test.json`` still use the original Unicode paths, and ``PlannerAgent``
-    opens ``path_to_gt_image`` with no fallback. A file is renamed only when
-    that round-trip produces a missing reference name and nothing is already
-    at the destination.
+    ``Path(__file__)`` is used instead of ``PROJECT_ROOT`` so a test (or a
+    caller) can point the data directory elsewhere without hiding the script.
     """
-    images_dir = task_dir / "images"
-    if not images_dir.is_dir():
-        return
-    missing = {
-        name for name in _reference_image_names(task_dir)
-        if not (images_dir / name).exists()
-    }
-    if not missing:
-        return
-    for image in list(images_dir.iterdir()):
-        if not image.is_file():
+    here = Path(__file__).resolve().parent
+    return (
+        here.parent / "scripts" / "prepare_bench.py",
+        here / "scripts" / "prepare_bench.py",
+        here / "prepare_bench.py",
+    )
+
+
+def _load_prepare():
+    """Return ``prepare`` from ``scripts/prepare_bench.py`` when it ships here.
+
+    ``import scripts.prepare_bench`` is fragile: ``scripts`` is not a package,
+    and an installed skill is not always launched with the repo root on
+    ``sys.path``. Loading by file location works from the project root and from
+    a skill tree that still contains the script. Otherwise the vendored copy
+    below is used, so a skill install that did not ship ``scripts/`` can still
+    download the dataset.
+    """
+    cached = getattr(_load_prepare, "fn", None)
+    if cached is not None:
+        return cached
+
+    import importlib.util
+
+    for script in _prepare_script_candidates():
+        if not script.is_file():
             continue
+        spec = importlib.util.spec_from_file_location(
+            "paperbanana_prepare_bench", script
+        )
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
         try:
-            repaired = image.name.encode("cp437").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            continue
-        if repaired not in missing:
-            continue
-        target = images_dir / repaired
-        if target.exists():
-            continue
-        image.rename(target)
-        missing.discard(repaired)
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(spec.name, None)
+            raise
+        _load_prepare.fn = module.prepare
+        return module.prepare
+
+    _load_prepare.fn = _vendored_prepare
+    return _vendored_prepare
+
+
+def _missing_dataset_dependency(exc: ImportError) -> bool:
+    name = getattr(exc, "name", None) or ""
+    if name in {"huggingface_hub", "pyarrow", "pyarrow.parquet"}:
+        return True
+    text = str(exc)
+    missing = "No module named" in text or "cannot import name" in text
+    return missing and ("huggingface_hub" in text or "pyarrow" in text)
+
+
+def _vendored_diagram_record(r):
+    return {
+        "id": r["id"],
+        "content": r["content"],
+        "visual_intent": r["visual_intent"],
+        "path_to_gt_image": r["path_to_gt_image"],
+        "category": r["category"],
+        "additional_info": {
+            "file_name": r["source_pdf"],
+            "file_path": f"pdfs/{r['source_pdf']}",
+            "diagram_page_num": r["diagram_page_num"],
+            "method_section_title": r["method_section_title"],
+            "width": r["width"],
+            "height": r["height"],
+            "rounded_ratio": r["rounded_ratio"],
+        },
+        "split": r["split"],
+    }
+
+
+def _vendored_plot_record(r):
+    return {
+        "id": r["id"],
+        "content": json.loads(r["content"]),
+        "visual_intent": r["visual_intent"],
+        "path_to_gt_image": r["path_to_gt_image"],
+        "original_category": r["original_category"],
+        "additional_info": {
+            "gt_code": r["gt_code"],
+            "width": float(r["width"]),
+            "height": float(r["height"]),
+            "rounded_ratio": r["rounded_ratio"],
+        },
+        "difficulty": r["difficulty"],
+        "category": r["category"],
+    }
+
+
+def _vendored_prepare(tasks, data_dir: Path, revision=None, parquet_dir=None):
+    """Same behavior as ``scripts/prepare_bench.prepare``.
+
+    Installed skills that do not include ``scripts/prepare_bench.py`` call this
+    copy. Keep it in step with that script.
+    """
+    import pyarrow.parquet as pq
+
+    out_root = data_dir / "PaperBananaBench"
+    for task in tasks:
+        task_dir = out_root / task
+        (task_dir / "images").mkdir(parents=True, exist_ok=True)
+        for split in _PREPARE_SPLITS:
+            fname = f"data/{task}/{split}-00000-of-00001.parquet"
+            if parquet_dir:
+                path = Path(parquet_dir) / task / f"{split}-00000-of-00001.parquet"
+            else:
+                from huggingface_hub import hf_hub_download
+                path = hf_hub_download(
+                    _PREPARE_REPO_ID, fname, repo_type="dataset", revision=revision
+                )
+            rows = pq.read_table(path).to_pylist()
+            records = []
+            for r in rows:
+                img = r.get("image") or {}
+                if img.get("bytes"):
+                    (task_dir / r["path_to_gt_image"]).write_bytes(img["bytes"])
+                records.append(
+                    _vendored_diagram_record(r)
+                    if task == "diagram"
+                    else _vendored_plot_record(r)
+                )
+            with open(task_dir / f"{split}.json", "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=4)
+            print(f"{task}/{split}: {len(records)} samples -> {task_dir}")
 
 
 def ensure_dataset(task_name: str):
-    """Download PaperBananaBench data from HuggingFace if not present locally.
+    """Download PaperBananaBench for ``task_name`` when it is not already usable.
 
-    The dataset is published as a single ``PaperBananaBench.zip``, not as a
-    per-task directory tree, so ``allow_patterns=["<task>/*"]`` matched no files
-    and nothing was ever downloaded. The archive's internal root is
-    ``PaperBananaBench/``, so extracting it into ``data/`` produces exactly the
-    ``data/PaperBananaBench/<task>/ref.json`` and ``.../images/`` layout the
-    Retriever and Planner already expect. A few diagram filenames in the
-    published zip are CP437 mojibake of the Unicode ``path_to_gt_image`` values;
-    those are renamed so the paths resolve.
+    The Hub dataset publishes Parquet (configs ``diagram`` and ``plot``, splits
+    ``test`` and ``ref``). ``prepare`` writes
+    ``data/PaperBananaBench/<task>/{test,ref}.json`` and ``images/``, the layout
+    the Retriever and Planner already read. Image bytes are stored on the rows
+    under the original ``path_to_gt_image`` names.
     """
     task_dir = dataset_task_dir(task_name)
     if task_dir_usable(task_dir):
-        align_reference_image_names(task_dir)
         return
     try:
-        from huggingface_hub import hf_hub_download
-    except ImportError:
-        print("ERROR: huggingface_hub is required for automatic dataset download.\n"
-              "Install it with: pip install huggingface_hub", file=sys.stderr)
-        sys.exit(1)
-
-    data_root = PROJECT_ROOT / "data"
-    data_root.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {DATASET_ARCHIVE} from HuggingFace...")
-
-    with tempfile.TemporaryDirectory(dir=str(data_root)) as staging:
-        staging = Path(staging)
-        archive = hf_hub_download(
-            DATASET_REPO,
-            DATASET_ARCHIVE,
-            repo_type="dataset",
-            local_dir=str(staging / "download"),
-        )
-        # Extract into staging and move into place, so an interrupted or corrupt
-        # extraction cannot leave a tree that satisfies the presence check above
-        # and silently disables retrieval on every later run.
-        extracted = staging / "extracted"
-        with zipfile.ZipFile(archive) as archive_file:
-            archive_file.extractall(extracted)
-
-        source = extracted / DATASET_ROOT
-        if not (source / task_name / "ref.json").exists():
-            raise RuntimeError(
-                f"{DATASET_ARCHIVE} did not contain {DATASET_ROOT}/{task_name}/ref.json; "
-                "the archive layout has changed and ensure_dataset needs updating"
+        prepare = _load_prepare()
+        prepare([task_name], PROJECT_ROOT / "data")
+    except ImportError as exc:
+        if _missing_dataset_dependency(exc):
+            print(
+                "ERROR: huggingface_hub and pyarrow are required for automatic "
+                "dataset download.\n"
+                "Install them with: pip install huggingface_hub pyarrow",
+                file=sys.stderr,
             )
-
-        destination = data_root / DATASET_ROOT
-        superseded = staging / "superseded"
-        for entry in source.iterdir():
-            target = destination / entry.name
-            if target.exists():
-                # Keep what is already usable; replace what is not. Skipping on
-                # mere existence strands a half-populated task directory: it
-                # never satisfies task_dir_usable, so every later run downloads
-                # and extracts the archive again and then discards the complete
-                # copy it just produced.
-                if target.is_dir() and task_dir_usable(target):
-                    continue
-                superseded.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(target), str(superseded / entry.name))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(entry), str(target))
-
-        for child in destination.iterdir():
-            if child.is_dir():
-                align_reference_image_names(child)
+            sys.exit(1)
+        raise
 
 
 def extract_final_image_b64(result: dict, exp_mode: str) -> str | None:

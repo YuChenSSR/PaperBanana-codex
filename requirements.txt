@@ -28,3 +28,6 @@ tqdm>=4.66.0
 json-repair>=0.30.0
 pyyaml>=6.0.1
 huggingface_hub>=0.26.0
+# scripts/prepare_bench.py reads Hub Parquet via Table.to_pylist (pyarrow 7+).
+# 14.0.0 is the first pyarrow release with Python 3.12 wheels.
+pyarrow>=14.0.0
