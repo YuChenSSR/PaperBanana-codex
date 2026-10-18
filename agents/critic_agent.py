@@ -24,7 +24,6 @@ from PIL import Image
 import json_repair
 
 from utils import generation_utils
-from utils.config import load_style_guide_for_task
 from .base_agent import BaseAgent
 
 
@@ -91,7 +90,6 @@ class CriticAgent(BaseAgent):
         if isinstance(content, (dict, list)):
             content = json.dumps(content)
         visual_intent = data["visual_intent"]
-        style_guide = load_style_guide_for_task(self.exp_config.work_dir, task_name)
         content_list = [{"type": "text", "text": cfg["critique_target"]}]
         
         if image_base64 and len(image_base64) > 100:
@@ -112,13 +110,7 @@ class CriticAgent(BaseAgent):
 
         content_list.append({
             "type": "text",
-            "text": (
-                f"Detailed Description: {detailed_description}\n"
-                f"Style Guidelines: {style_guide}\n"
-                f"{cfg['context_labels'][0]}: {content}\n"
-                f"{cfg['context_labels'][1]}: {visual_intent}\n"
-                "Your Output:"
-            ),
+            "text": f"Detailed Description: {detailed_description}\n{cfg['context_labels'][0]}: {content}\n{cfg['context_labels'][1]}: {visual_intent}\nYour Output:",
         })
 
         response_list = await generation_utils.call_model_with_retry_async(
@@ -184,7 +176,6 @@ Your Description should primarily be modifications based on the original descrip
 ## INPUT DATA
 -   **Target Diagram**: [The generated figure]
 -   **Detailed Description**: [The detailed description of the figure]
--   **Style Guidelines**: [Task-specific NeurIPS 2025 style guidelines]
 -   **Methodology Section**: [Contextual content from the methodology section]
 -   **Figure Caption**: [Target figure caption]
 
@@ -229,7 +220,6 @@ You are also provided with the 'Detailed Description' corresponding to the curre
 ## INPUT DATA
 -   **Target Plot**: [The generated plot]
 -   **Detailed Description**: [The detailed description of the plot]
--   **Style Guidelines**: [Task-specific NeurIPS 2025 style guidelines]
 -   **Raw Data**: [The raw data to be visualized]
 -   **Visual Intent**: [Visual intent of the desired plot]
 
