@@ -27,6 +27,11 @@ api_keys:
   openrouter_api_key: "" # e.g. "sk-or-v1-xxxxx". Set model_name to "openrouter/<model>" to use.
   orcarouter_api_key: "" # e.g. "sk-orca-xxxxx". Set model_name to "orcarouter/<model>" to use.
   atlascloud_api_key: "" # Set model_name to "atlas/<model>" to use Atlas Cloud.
+  local_openai_api_key: "" # Optional for local/<model>. Defaults to "local".
+  ollama_api_key: "" # Optional for ollama/<model>. Defaults to "ollama".
 
 base_urls:
   atlascloud_base_url: "https://api.atlascloud.ai/v1"
+  # Text-only OpenAI-compatible servers. Image agents reject local/ and ollama/.
+  local_openai_base_url: "" # Required for local/<model>, e.g. "http://127.0.0.1:8000/v1"
+  ollama_base_url: "" # Optional override; ollama/<model> defaults to http://localhost:11434/v1

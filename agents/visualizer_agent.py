@@ -123,64 +123,22 @@ class VisualizerAgent(BaseAgent):
             image_size = image_size_from_data(data)
 
             if cfg["use_image_generation"]:
-                if "gpt-image" in self.model_name:
-                    image_config = {
-                        "size": "1536x1024",
-                        "quality": "high",
-                        "background": "opaque",
-                        "output_format": "png",
-                    }
-                    response_list = await generation_utils.call_openai_image_generation_with_retry_async(
-                        model_name=self.model_name,
-                        prompt=prompt_text,
-                        config=image_config,
-                        max_attempts=5,
-                        retry_delay=30,
-                    )
-                elif generation_utils.openrouter_client is not None:
-                    # OpenRouter image generation
-                    image_config = {
-                        "system_prompt": self.system_prompt,
-                        "temperature": self.exp_config.temperature,
-                        "aspect_ratio": aspect_ratio,
-                        "image_size": image_size,
-                    }
-                    response_list = await generation_utils.call_openrouter_image_generation_with_retry_async(
-                        model_name=self.model_name,
-                        contents=content_list,
-                        config=image_config,
-                        max_attempts=5,
-                        retry_delay=30,
-                    )
-                elif generation_utils.orcarouter_client is not None:
-                    # OrcaRouter image generation
-                    image_config = {
-                        "system_prompt": self.system_prompt,
-                        "temperature": self.exp_config.temperature,
-                        "aspect_ratio": aspect_ratio,
-                        "image_size": image_size,
-                    }
-                    response_list = await generation_utils.call_orcarouter_image_generation_with_retry_async(
-                        model_name=self.model_name,
-                        contents=content_list,
-                        config=image_config,
-                        max_attempts=5,
-                        retry_delay=30,
-                    )
-                else:
-                    # Gemini direct image generation
-                    gen_config_args["response_modalities"] = ["IMAGE"]
-                    gen_config_args["image_config"] = types.ImageConfig(
-                        aspect_ratio=aspect_ratio,
-                        image_size=image_size,
-                    )
-                    response_list = await generation_utils.call_gemini_with_retry_async(
-                        model_name=self.model_name,
-                        contents=content_list,
-                        config=types.GenerateContentConfig(**gen_config_args),
-                        max_attempts=5,
-                        retry_delay=30,
-                    )
+                generation_utils.assert_not_local_openai_image_model(
+                    self.model_name,
+                    route_name="visualizer image generation",
+                )
+                response_list = await generation_utils.dispatch_image_generation(
+                    self.model_name,
+                    prompt=prompt_text,
+                    contents=content_list,
+                    system_prompt=self.system_prompt,
+                    temperature=self.exp_config.temperature,
+                    aspect_ratio=aspect_ratio,
+                    image_size=image_size,
+                    gemini_config_args=gen_config_args,
+                    max_attempts=5,
+                    retry_delay=30,
+                )
             else:
                 # Code generation for plots — use the unified router
                 response_list = await generation_utils.call_model_with_retry_async(

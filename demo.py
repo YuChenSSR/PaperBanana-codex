@@ -202,7 +202,10 @@ async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9
     Returns:
         Tuple of (edited_image_bytes, success_message)
     """
+    from utils.generation_utils import assert_not_local_openai_image_model
+
     image_model = get_config_val("defaults", "image_gen_model_name", "IMAGE_GEN_MODEL_NAME", "")
+    assert_not_local_openai_image_model(image_model, route_name="image refinement")
 
     # Encode image as base64 data URL for OpenRouter
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
