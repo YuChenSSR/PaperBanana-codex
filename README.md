@@ -15,6 +15,7 @@ This repository forked the content of that repo and aims to keep evolving toward
 
 
 ## Latest News
+- **2026-04-30**: PaperBanana was accepted to ICML 2026 as a Spotlight.
 - **2026-03-24**: PaperBanana is now [hosted on Hugging Face Spaces](https://huggingface.co/spaces/dwzhu/PaperBanana). Many thanks to the Hugging Face team for their support.
 - **2026-03-11**: Published PaperBanana as a [ClawHub skill](https://clawhub.ai/skills/paperbanana) — install with `clawhub install paperbanana`.
 - **2026-03-11**: Added model selection to Streamlit UI — now supports choosing both Main Model (VLM) and Image Generation Model, with preset options and custom input.
@@ -81,6 +82,10 @@ Note that if you need to generate many candidates simultaneously, you will requi
 ### Step4: Downloading the Dataset
 Run `python scripts/prepare_bench.py` (optionally `--tasks diagram`) to download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) from the Hugging Face Hub into `data/PaperBananaBench/`. For direct use, the alternative is `load_dataset("dwzhu/PaperBananaBench", "diagram")` (or `"plot"`), with splits `"test"` and `"ref"`. That alternative needs `pip install datasets`. The framework is designed to function gracefully without the dataset by bypassing the Retriever Agent's few-shot learning capability. If interested in the original PDFs, please download them from [PaperBananaDiagramPDFs](https://huggingface.co/datasets/dwzhu/PaperBananaDiagramPDFs).
 
+### Usage Tips
+
+**Keep retrieval enabled.** It retrieves reference examples from PaperBananaBench, which lets the system learn the drawing style of those examples and produce better results. Retrieval is already on by default (`auto`) for the CLI (`--retrieval_setting`) and for the Gradio and Streamlit **Retrieval Setting** controls. Leave it at `auto`, and do not set `none`. Prepare the dataset with `python scripts/prepare_bench.py`; if `data/PaperBananaBench/diagram/ref.json` (or `plot/ref.json`) is missing, `auto` falls back to `none`.
+
 ### Launch PaperBanana
 
 #### Option 1: Gradio Web App (Recommended)
@@ -136,8 +141,7 @@ python main.py \
   --dataset_name "PaperBananaBench" \
   --task_name "plot" \
   --split_name "test" \
-  --exp_mode "vanilla" \
-  --retrieval_setting "none"
+  --exp_mode "vanilla"
 ```
 
 **Available Options:**
@@ -145,7 +149,7 @@ python main.py \
 - `--task_name`: Task type - `diagram` or `plot` (default: `diagram`)
 - `--split_name`: Dataset split (default: `test`)
 - `--exp_mode`: Experiment mode (see section below)
-- `--retrieval_setting`: Retrieval strategy - `auto`, `manual`, `random`, or `none` (default: `auto`)
+- `--retrieval_setting`: Retrieval strategy - `auto`, `manual`, `random`, or `none` (default: `auto`). Keep the default `auto`; do not set `none`.
 
 **Experiment Modes:**
 - `vanilla`: Direct generation without planning or refinement
