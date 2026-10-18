@@ -67,7 +67,7 @@ from utils.legacy_generation_options import (
 )
 from utils.image_utils import encode_refine_image_as_jpeg
 from utils.legacy_ui_results import build_evolution_stages, resolve_final_output
-from utils.paperviz_processor import PaperVizProcessor
+from utils.paperviz_processor import PaperVizProcessor, generation_progress_update
 
 model_config_data = {}
 if config_path.exists():
@@ -136,6 +136,7 @@ def create_sample_inputs(
 async def process_parallel_candidates(
     data_list, exp_mode="dev_planner_critic", retrieval_setting="auto",
     main_model_name="", image_gen_model_name="", task_name="diagram",
+    progress_callback=None,
 ):
     task_name = "plot" if "plot" in (task_name or "").lower() else "diagram"
     exp_config = config.ExpConfig(
@@ -159,7 +160,12 @@ async def process_parallel_candidates(
         polish_agent=PolishAgent(exp_config=exp_config),
     )
     results = []
-    async for result_data in processor.process_queries_batch(data_list, max_concurrent=10, do_eval=False):
+    async for result_data in processor.process_queries_batch(
+        data_list,
+        max_concurrent=10,
+        do_eval=False,
+        progress_callback=progress_callback,
+    ):
         result_data["task_name"] = task_name
         results.append(result_data)
     return results
@@ -674,7 +680,9 @@ def build_app():
                     method_text, caption_text, pipe_mode, task_name, ret_setting,
                     n_cands, ar, max_rounds, m_model, img_model,
                     figure_size, save_results,
-                    progress=gr.Progress(track_tqdm=True),
+                    # Batch tqdm would replace per-stage fractions (snap to 0,
+                    # then hit 1.0 before "Saving results").
+                    progress=gr.Progress(track_tqdm=False),
                 ):
                     if not method_text or not caption_text:
                         raise gr.Error("Please provide both method content and caption.")
@@ -682,6 +690,11 @@ def build_app():
                     n_cands = int(n_cands)
                     max_rounds = int(max_rounds)
                     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                    # Per-stage progress across candidates. Adapted from #56 by @noking-xdj.
+                    def _progress_cb(status):
+                        fraction, desc = generation_progress_update(status)
+                        progress(fraction, desc=desc)
 
                     progress(0, desc="Preparing inputs...")
                     input_data = create_sample_inputs(
@@ -699,6 +712,7 @@ def build_app():
                                 input_data, exp_mode=pipe_mode, retrieval_setting=ret_setting,
                                 main_model_name=m_model, image_gen_model_name=img_model,
                                 task_name=task_name,
+                                progress_callback=_progress_cb,
                             )
                         )
                         loop.close()
