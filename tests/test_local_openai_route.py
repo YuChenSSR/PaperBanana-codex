@@ -114,6 +114,78 @@ class LocalOpenAIRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("unit test", call.await_args.kwargs["error_context"])
         gemini.assert_not_awaited()
 
+    async def test_local_routes_send_max_tokens_to_chat_completions(self) -> None:
+        created = AsyncMock(
+            return_value=SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            )
+        )
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=created))
+        )
+        generation_utils.local_openai_client = client
+        generation_utils.ollama_client = client
+
+        for model_name in ("local/qwen2.5:14b", "ollama/llama3.1:8b"):
+            created.reset_mock()
+            result = await generation_utils.call_model_with_retry_async(
+                model_name,
+                [{"type": "text", "text": "hello"}],
+                _text_config(),
+                max_attempts=1,
+                retry_delay=0,
+            )
+            self.assertEqual(["ok", "ok"], result)
+            self.assertEqual(2, created.await_count)
+            for call in created.await_args_list:
+                self.assertEqual(1234, call.kwargs["max_tokens"])
+                self.assertNotIn("max_completion_tokens", call.kwargs)
+
+        for provider_name in ("OpenAI", "Atlas Cloud"):
+            created.reset_mock()
+            result = await generation_utils.call_openai_with_retry_async(
+                model_name="gpt-4.1",
+                contents=[{"type": "text", "text": "hello"}],
+                config={
+                    "system_prompt": "system",
+                    "temperature": 0.2,
+                    "candidate_num": 2,
+                    "max_completion_tokens": 321,
+                },
+                max_attempts=1,
+                retry_delay=0,
+                client=client,
+                provider_name=provider_name,
+            )
+            self.assertEqual(["ok", "ok"], result)
+            self.assertEqual(2, created.await_count)
+            for call in created.await_args_list:
+                self.assertEqual(321, call.kwargs["max_completion_tokens"])
+                self.assertNotIn("max_tokens", call.kwargs)
+
+    async def test_refine_helpers_reject_local_image_models(self) -> None:
+        import app
+        import demo
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("hosted image provider should not be called")
+
+        hosted = {
+            "call_openrouter_image_generation_with_retry_async": fail_if_called,
+            "call_orcarouter_image_generation_with_retry_async": fail_if_called,
+            "call_gemini_with_retry_async": fail_if_called,
+        }
+        with patch.dict(os.environ, {"IMAGE_GEN_MODEL_NAME": "local/llava"}), patch.multiple(
+            generation_utils, **hosted
+        ):
+            with self.assertRaisesRegex(ValueError, "text-only"):
+                await app.refine_image_with_nanoviz(b"img", "make it clearer")
+        with patch.dict(os.environ, {"IMAGE_GEN_MODEL_NAME": "ollama/llava"}), patch.multiple(
+            generation_utils, **hosted
+        ):
+            with self.assertRaisesRegex(ValueError, "text-only"):
+                await demo.refine_image_with_nanoviz(b"img", "make it clearer")
+
     async def test_ollama_prefix_defaults_to_local_server(self) -> None:
         with patch.object(
             generation_utils,

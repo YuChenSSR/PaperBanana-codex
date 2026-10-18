@@ -514,7 +514,13 @@ async def call_openai_with_retry_async(
     system_prompt = config["system_prompt"]
     temperature = config["temperature"]
     candidate_num = config["candidate_num"]
-    max_completion_tokens = config["max_completion_tokens"]
+    # Ollama's OpenAI-compatible API ignores max_completion_tokens.
+    token_limit = config["max_completion_tokens"]
+    token_kw = (
+        "max_tokens"
+        if provider_name in ("Local OpenAI-compatible", "Ollama")
+        else "max_completion_tokens"
+    )
     response_text_list = []
 
     # --- Preparation Phase ---
@@ -535,7 +541,7 @@ async def call_openai_with_retry_async(
                     {"role": "user", "content": openai_contents}
                 ],
                 temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
+                **{token_kw: token_limit},
             )
             # If we reach here, the input is valid.
             content = first_response.choices[0].message.content or ""
@@ -579,7 +585,7 @@ async def call_openai_with_retry_async(
                     {"role": "user", "content": valid_openai_contents}
                 ],
                 temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
+                **{token_kw: token_limit},
             )
             for _ in range(remaining_candidates)
         ]
