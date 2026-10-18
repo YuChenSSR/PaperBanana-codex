@@ -170,38 +170,25 @@ class PolishAgent(BaseAgent):
         aspect_ratio = data.get("additional_info", {}).get("rounded_ratio", "16:9")
         image_size = image_size_from_data(data)
         try:
-            if generation_utils.openrouter_client is not None:
-                image_config = {
-                    "system_prompt": self.system_prompt,
+            response_list = await generation_utils.dispatch_image_generation(
+                self.image_gen_model_name,
+                prompt=user_prompt,
+                contents=content_list,
+                system_prompt=self.system_prompt,
+                temperature=self.exp_config.temperature,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+                gemini_config_args={
+                    "system_instruction": self.system_prompt,
                     "temperature": self.exp_config.temperature,
-                    "aspect_ratio": aspect_ratio,
-                    "image_size": image_size,
-                }
-                response_list = await generation_utils.call_openrouter_image_generation_with_retry_async(
-                    model_name=self.image_gen_model_name,
-                    contents=content_list,
-                    config=image_config,
-                    max_attempts=5,
-                    retry_delay=30,
-                )
-            else:
-                response_list = await generation_utils.call_gemini_with_retry_async(
-                    model_name=self.image_gen_model_name,
-                    contents=content_list,
-                    config=types.GenerateContentConfig(
-                        system_instruction=self.system_prompt,
-                        temperature=self.exp_config.temperature,
-                        candidate_count=1,
-                        max_output_tokens=50000,
-                        response_modalities=["IMAGE"],
-                        image_config=types.ImageConfig(
-                            aspect_ratio=aspect_ratio,
-                            image_size=image_size,
-                        ),
-                    ),
-                    max_attempts=5,
-                    retry_delay=30,
-                )
+                    "candidate_count": 1,
+                    "max_output_tokens": 50000,
+                },
+                include_gpt_image=False,
+                include_orcarouter=False,
+                max_attempts=5,
+                retry_delay=30,
+            )
             
             if response_list and response_list[0]:
                 # Convert PNG to JPG
