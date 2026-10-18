@@ -57,6 +57,7 @@ try:
         generation_additional_info,
         normalize_legacy_input_content,
     )
+    from utils.image_utils import encode_refine_image_as_jpeg
     from utils.legacy_ui_results import build_evolution_stages, resolve_final_output
     from utils.paperviz_processor import PaperVizProcessor
     print("DEBUG: Imported utils")
@@ -978,10 +979,7 @@ The framework extends to statistical plots by adjusting the Visualizer and Criti
                     else:
                         with st.spinner(f"Refining image to {refine_resolution} resolution... This may take a minute."):
                             try:
-                                # Convert PIL image to bytes
-                                img_byte_arr = BytesIO()
-                                uploaded_image.save(img_byte_arr, format='JPEG')
-                                image_bytes = img_byte_arr.getvalue()
+                                image_bytes = encode_refine_image_as_jpeg(uploaded_image)
                                 
                                 # Call nanoviz API
                                 refined_bytes, message = asyncio.run(
