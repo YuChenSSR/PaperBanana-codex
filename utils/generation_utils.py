@@ -59,6 +59,84 @@ openrouter_api_key = ""
 orcarouter_client = None
 orcarouter_api_key = ""
 atlascloud_client = None
+local_openai_client = None
+ollama_client = None
+
+OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1"
+_LOCAL_TEXT_PREFIXES = ("local/", "ollama/")
+
+
+def _split_local_text_prefix(model_name: str):
+    """Return (kind, model_id) for local/ or ollama/ names, else None."""
+    stripped = (model_name or "").strip()
+    lower = stripped.lower()
+    for prefix in _LOCAL_TEXT_PREFIXES:
+        if lower.startswith(prefix):
+            return prefix[:-1], stripped[len(prefix) :].strip()
+    return None
+
+
+def is_local_openai_model_name(model_name: str) -> bool:
+    """Return whether a model name targets a local text-only route."""
+    return _split_local_text_prefix(model_name) is not None
+
+
+def assert_not_local_openai_image_model(
+    model_name: str, route_name: str = "image generation"
+) -> None:
+    """Reject local OpenAI-compatible text routes before image-provider dispatch."""
+    if is_local_openai_model_name(model_name):
+        raise ValueError(
+            f"{model_name!r} uses a local OpenAI-compatible text route. "
+            f"local/ and ollama/ prefixes are text-only and cannot be used for {route_name}. "
+            "Set image_gen_model_name to a supported image-capable model."
+        )
+
+
+def _make_local_text_client(kind: str, *, require_base_url: bool):
+    """Build an OpenAI-compatible client for a local text route.
+
+    Startup only creates a client when a base URL is configured. ollama/ calls
+    fall back to the local Ollama server when no override is set.
+    """
+    if kind == "ollama":
+        base_url = get_config_val("base_urls", "ollama_base_url", "OLLAMA_BASE_URL", "")
+        if not base_url:
+            if not require_base_url:
+                return None
+            base_url = OLLAMA_DEFAULT_BASE_URL
+        api_key = get_config_val("api_keys", "ollama_api_key", "OLLAMA_API_KEY", "") or "ollama"
+    else:
+        base_url = get_config_val(
+            "base_urls", "local_openai_base_url", "LOCAL_OPENAI_BASE_URL", ""
+        )
+        if not base_url:
+            if not require_base_url:
+                return None
+            raise RuntimeError(
+                "Local OpenAI-compatible client is not initialized: missing base URL. "
+                "Set LOCAL_OPENAI_BASE_URL or base_urls.local_openai_base_url "
+                "in configs/model_config.yaml."
+            )
+        api_key = (
+            get_config_val("api_keys", "local_openai_api_key", "LOCAL_OPENAI_API_KEY", "")
+            or "local"
+        )
+    return AsyncOpenAI(base_url=base_url.rstrip("/"), api_key=api_key)
+
+
+def _client_for_local_text(kind: str):
+    """Reuse the initialized client, or build one for this text call."""
+    global local_openai_client, ollama_client
+    current = ollama_client if kind == "ollama" else local_openai_client
+    if current is not None:
+        return current
+    client = _make_local_text_client(kind, require_base_url=True)
+    if kind == "ollama":
+        ollama_client = client
+    else:
+        local_openai_client = client
+    return client
 
 
 def reinitialize_clients():
@@ -73,6 +151,7 @@ def reinitialize_clients():
     global openrouter_client, openrouter_api_key
     global orcarouter_client, orcarouter_api_key
     global atlascloud_client
+    global local_openai_client, ollama_client
 
     initialized = []
 
@@ -140,6 +219,16 @@ def reinitialize_clients():
         initialized.append("Atlas Cloud")
     else:
         atlascloud_client = None
+
+    local_openai_client = _make_local_text_client("local", require_base_url=False)
+    if local_openai_client is not None:
+        print("Initialized Local OpenAI-compatible Client")
+        initialized.append("Local OpenAI-compatible")
+
+    ollama_client = _make_local_text_client("ollama", require_base_url=False)
+    if ollama_client is not None:
+        print("Initialized Ollama Client")
+        initialized.append("Ollama")
 
     return initialized
 
@@ -425,7 +514,13 @@ async def call_openai_with_retry_async(
     system_prompt = config["system_prompt"]
     temperature = config["temperature"]
     candidate_num = config["candidate_num"]
-    max_completion_tokens = config["max_completion_tokens"]
+    # Ollama's OpenAI-compatible API ignores max_completion_tokens.
+    token_limit = config["max_completion_tokens"]
+    token_kw = (
+        "max_tokens"
+        if provider_name in ("Local OpenAI-compatible", "Ollama")
+        else "max_completion_tokens"
+    )
     response_text_list = []
 
     # --- Preparation Phase ---
@@ -446,7 +541,7 @@ async def call_openai_with_retry_async(
                     {"role": "user", "content": openai_contents}
                 ],
                 temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
+                **{token_kw: token_limit},
             )
             # If we reach here, the input is valid.
             content = first_response.choices[0].message.content or ""
@@ -490,7 +585,7 @@ async def call_openai_with_retry_async(
                     {"role": "user", "content": valid_openai_contents}
                 ],
                 temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
+                **{token_kw: token_limit},
             )
             for _ in range(remaining_candidates)
         ]
@@ -1030,6 +1125,7 @@ async def call_model_with_retry_async(
 
     Routing rules:
       1. Explicit prefix overrides: "atlas/" -> Atlas Cloud,
+         "local/" and "ollama/" -> local OpenAI-compatible text endpoints,
          "openrouter/" -> OpenRouter, "orcarouter/" -> OrcaRouter,
          "claude-" -> Anthropic,
          "gpt-"/"o1-"/"o3-"/"o4-" -> OpenAI
@@ -1037,6 +1133,9 @@ async def call_model_with_retry_async(
          Priority: OpenRouter > OrcaRouter > Gemini > Anthropic > OpenAI
     """
     # Explicit provider prefix overrides auto-detection
+    local_text = _split_local_text_prefix(model_name)
+    local_text_client = None
+    local_text_name = ""
     if model_name.startswith("atlas/"):
         provider = "atlascloud"
         actual_model = model_name[len("atlas/") :]
@@ -1047,6 +1146,13 @@ async def call_model_with_retry_async(
                 "Atlas Cloud client is not initialized. Set ATLASCLOUD_API_KEY "
                 "or configure api_keys.atlascloud_api_key."
             )
+    elif local_text is not None:
+        kind, actual_model = local_text
+        if not actual_model:
+            raise ValueError(f"{kind} model id cannot be empty")
+        provider = "local_text"
+        local_text_client = _client_for_local_text(kind)
+        local_text_name = "Ollama" if kind == "ollama" else "Local OpenAI-compatible"
     elif model_name.startswith("openrouter/"):
         provider = "openrouter"
         actual_model = model_name[len("openrouter/"):]
@@ -1098,7 +1204,7 @@ async def call_model_with_retry_async(
         "max_completion_tokens": config.max_output_tokens if hasattr(config, "max_output_tokens") else 50000,
     }
 
-    if provider == "atlascloud":
+    if provider in ("atlascloud", "local_text"):
         return await call_openai_with_retry_async(
             model_name=actual_model,
             contents=contents,
@@ -1106,8 +1212,8 @@ async def call_model_with_retry_async(
             max_attempts=max_attempts,
             retry_delay=retry_delay,
             error_context=error_context,
-            client=atlascloud_client,
-            provider_name="Atlas Cloud",
+            client=atlascloud_client if provider == "atlascloud" else local_text_client,
+            provider_name="Atlas Cloud" if provider == "atlascloud" else local_text_name,
         )
 
     call_fn = {
