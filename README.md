@@ -1,34 +1,50 @@
-# PaperBanana-Codex 🍌
+<h1 align="center">PaperBanana-Codex 🍌</h1>
 
-**在 Codex 中使用 ChatGPT 订阅，运行 PaperBanana 作者版的论文配图流程。**
+<p align="center">
+  <strong>从方法说明，到参考驱动、可迭代修改的论文插图。</strong><br>
+  PaperBanana 作者版工作流 · Codex / ChatGPT 订阅接入
+</p>
 
-本项目基于论文第一作者维护的 [dwzhu-pku/PaperBanana](https://github.com/dwzhu-pku/PaperBanana)，
-新增本地 Codex 订阅适配器和 `$paperbanana` 技能。作者的 agents、prompts、
-风格指南及核心 provider 文件保持原样；适配器在运行时连接 Codex app-server。
+<p align="center">
+  <a href="#quick-start">快速安装</a> ·
+  <a href="#use-in-codex">在 Codex 中使用</a> ·
+  <a href="integrations/codex/README.md">English guide</a> ·
+  <a href="README.upstream.md">原作者项目</a>
+</p>
 
-Codex subscription integration for the first author's PaperBanana implementation.
-See the [English integration guide](integrations/codex/README.md) for setup and technical details.
-
-[在 Codex 中使用](#在-codex-中使用) · [命令行](#命令行使用) ·
-[适配范围](#适配范围与限制) · [原作者 README](README.upstream.md) ·
-[论文](https://arxiv.org/abs/2601.23265)
+本项目基于第一作者维护的 [dwzhu-pku/PaperBanana](https://github.com/dwzhu-pku/PaperBanana)，
+保留作者核心实现，通过独立适配器接入本机 Codex 的 ChatGPT 登录。
 
 ## 工作方式
 
-[![PaperBanana-Codex 完整工作流程：输入与调用、作者五阶段流程、订阅模型后端、审图修改回路及输出](assets/paperbanana-codex-workflow-upstream-style.png)](assets/paperbanana-codex-workflow-upstream-style.png)
+[![PaperBanana-Codex 概念总览：参考驱动的规划，以及 Visualizer 与 Critic 组成的迭代修改回路](assets/paperbanana-codex-overview.png)](assets/paperbanana-codex-overview.png)
 
-流程内容通过本仓库的 `$paperbanana` 订阅流程生成，随后参照原作者的
-[方法图](assets/method_diagram.png)与[示例图](assets/teaser_figure.jpg)进行了原生配色修订。
-点击可查看原图；粉蓝对应规划阶段，杏橙突出出图与修改回路。
-图中包含方法图与统计图两种渲染路径，以及独立保留的原版 API 入口。
-[绘图说明](docs/figures/workflow-method.md) · [配色修订](docs/figures/workflow-style-revision.md) · [生成记录](docs/figures/workflow-generation.json)
+以方法图为例：先检索参考、规划内容并调整风格，再生成草图，通过视觉审查迭代修改。
+[概念图设计与来源](docs/figures/overview-visual.md) · [生成记录](docs/figures/workflow-generation.json)
 
-- **文字和视觉理解**：默认继承你在 Codex 中配置的模型和推理档位。
-- **方法图出图**：使用 Codex 原生图片生成工具。
-- **认证**：使用本机已有的 ChatGPT 登录；此订阅入口无需另配模型 API Key。
-- **参考图**：使用作者的 PaperBananaBench 数据集。
+| 参考驱动规划 | 原生图片生成 | 视觉反馈迭代 |
+| --- | --- | --- |
+| 从 PaperBananaBench 选取参考，组织模块、关系和布局。 | 使用 Codex 原生绘图工具呈现设计；保留草图和中间结果。 | Critic 对照原始内容检查图片，给出具体修改意见。 |
 
-模型权限、图片生成可用性和使用额度取决于登录账号。适配器不会自动切换到收费 API。
+默认继承 Codex 中配置的模型和推理档位，订阅入口无需另配模型 API Key。
+模型与绘图权限、可用额度取决于登录账号。
+
+<details>
+<summary><strong>展开完整工程流程：输入、模型后端、渲染分支与输出记录</strong></summary>
+
+[![PaperBanana-Codex 完整工程流程](assets/paperbanana-codex-workflow-upstream-style.png)](assets/paperbanana-codex-workflow-upstream-style.png)
+
+工程图包含方法图与统计图两种渲染路径，以及独立保留的原版 API 入口。
+它通过本仓库的 `$paperbanana` 订阅流程生成，随后参照原作者配色进行了原生图片修订。
+完整工程图与上方重新设计的概念图用途不同，两者分别保留。
+
+[详细适配说明](integrations/codex/README.md) ·
+[工程图绘图说明](docs/figures/workflow-method.md) ·
+[配色修订](docs/figures/workflow-style-revision.md)
+
+</details>
+
+<a id="quick-start"></a>
 
 ## 快速安装（macOS / Linux）
 
@@ -66,6 +82,8 @@ uv pip install --python .venv/bin/python -r requirements.txt
 
 安装器会将旧的 `paperbanana-author` 技能迁移为 `paperbanana`，并备份它自己的旧文件。
 安装后请保留仓库及 `.venv`，因为调用命令指向这个环境。
+
+<a id="use-in-codex"></a>
 
 ## 在 Codex 中使用
 
@@ -145,7 +163,7 @@ PDF 需要先由 Codex 提取相关方法文本；适配器本身接收 UTF-8 �
 
 ## 原作者、论文与许可
 
-PaperBanana 论文和原始实现来自 Dawei Zhu、Rui Meng、Yale Song、Xiyu Wei、
+[PaperBanana 论文](https://arxiv.org/abs/2601.23265)和原始实现来自 Dawei Zhu、Rui Meng、Yale Song、Xiyu Wei、
 Sujian Li、Tomas Pfister 和 Jinsung Yoon。作者版承接了 Google Research 的
 [PaperVizAgent](https://github.com/google-research/papervizagent)。
 本 fork 独立维护 Codex 接入，不代表原作者、Google 或 OpenAI 的官方支持。

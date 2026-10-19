@@ -72,7 +72,7 @@
     "Raw prompts, call logs and intermediate images remain in the local git-ignored results directory.",
     "The last regeneration is not followed by an additional author Critic pass; the exported image was separately inspected by the integrating Codex assistant."
   ],
-  "displayed_output": "assets/paperbanana-codex-workflow-upstream-style.png",
+  "displayed_output": "assets/paperbanana-codex-overview.png",
   "style_revision": {
     "revised_at": "2026-10-19T23:06:43+08:00",
     "method": "Native image edit of the PaperBanana-generated workflow; the full pipeline was not rerun.",
@@ -101,5 +101,38 @@
     },
     "review": "Visually checked labels, stage order, alternative rendering branches, critic feedback, separate model support, and isolated upstream API route.",
     "previous_image_preserved": true
+  },
+  "detailed_workflow_output": "assets/paperbanana-codex-workflow-upstream-style.png",
+  "concept_overview": {
+    "created_at": "2026-10-20T00:04:42+08:00",
+    "purpose": "README concept overview of the methodology-diagram route",
+    "method": "Native image generation from the verified workflow and original-author visual references; not a rerun of the PaperBanana Python pipeline.",
+    "tool": "image_gen.imagegen",
+    "references": [
+      "assets/paperbanana-codex-workflow-upstream-style.png",
+      "assets/method_diagram.png"
+    ],
+    "source_record": "docs/figures/overview-visual.md",
+    "output": "assets/paperbanana-codex-overview.png",
+    "image": {
+      "format": "PNG",
+      "dimensions": [
+        1859,
+        846
+      ],
+      "bytes": 1532264,
+      "sha256": "232a26c531cdfc3f91706c16362b06567585d5344cb14f0858b2b2c3cbbf6240",
+      "postprocessing": "None; native file copied byte-for-byte."
+    },
+    "review": {
+      "checked": [
+        "Five named author roles and their order",
+        "Reference examples and intermediate plans",
+        "Visualizer to draft to Critic with return arrow to Visualizer",
+        "Shared subscription runtime is not a sixth stage",
+        "Readable labels and phase hierarchy"
+      ],
+      "result": "Accepted for the README concept overview; full engineering detail retained separately."
+    }
   }
 }

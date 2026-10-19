@@ -9,7 +9,15 @@ this integration.
 这是作者版 PaperBanana 的 Codex 订阅适配。保留作者的检索、规划、风格、
 绘图和 Critic 流程，通过本地 Codex 登录调用模型。
 
-## Workflow
+## Concept overview
+
+[![PaperBanana-Codex concept overview](../../assets/paperbanana-codex-overview.png)](../../assets/paperbanana-codex-overview.png)
+
+The methodology-diagram route uses reference-guided planning followed by a
+bounded render/critique loop. This conceptual overview was redesigned with native
+image generation; see its [design and provenance](../../docs/figures/overview-visual.md).
+
+## Complete engineering workflow
 
 [![PaperBanana-Codex workflow](../../assets/paperbanana-codex-workflow-upstream-style.png)](../../assets/paperbanana-codex-workflow-upstream-style.png)
 
