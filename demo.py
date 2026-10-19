@@ -57,6 +57,7 @@ try:
         generation_additional_info,
         normalize_legacy_input_content,
     )
+    from utils.image_utils import encode_refine_image_as_jpeg
     from utils.legacy_ui_results import build_evolution_stages, resolve_final_output
     from utils.paperviz_processor import PaperVizProcessor
     print("DEBUG: Imported utils")
@@ -149,6 +150,7 @@ async def process_parallel_candidates(
     main_model_name="",
     image_gen_model_name="",
     task_name="diagram",
+    max_concurrent=10,
 ):
     """Process multiple candidates in parallel using PaperVizProcessor."""
     task_name = "plot" if "plot" in (task_name or "").lower() else "diagram"
@@ -178,7 +180,8 @@ async def process_parallel_candidates(
     
     # Process all candidates in parallel (concurrency controlled by processor)
     results = []
-    concurrent_num = 10  # Process all 10 in parallel
+    # Never forward a non-positive limit; an empty batch still uses 1.
+    concurrent_num = max(1, min(int(max_concurrent), len(data_list) or 1))
     
     async for result_data in processor.process_queries_batch(
         data_list, max_concurrent=concurrent_num, do_eval=False
@@ -372,6 +375,128 @@ def display_candidate_result(result, candidate_id, exp_mode):
             else:
                 st.info("No description available")
 
+def infer_exp_mode_from_results(results):
+    """Best-effort pipeline inference for saved JSON that stores results only."""
+    if not results or not isinstance(results[0], dict):
+        return "demo_full"
+    sample = results[0]
+    stylist_markers = (
+        "target_diagram_stylist_desc0",
+        "target_plot_stylist_desc0",
+        "target_diagram_stylist_desc0_base64_jpg",
+        "target_plot_stylist_desc0_base64_jpg",
+    )
+    if any(key in sample for key in stylist_markers):
+        return "demo_full"
+    if any(
+        isinstance(key, str)
+        and key.startswith(("target_diagram_critic_desc", "target_plot_critic_desc"))
+        for key in sample
+    ):
+        return "demo_planner_critic"
+    return "demo_full"
+
+
+def infer_timestamp_from_filename(file_path: Path) -> str:
+    """Convert demo_YYYYMMDD_HHMMSS.json into a readable timestamp if possible."""
+    stem = file_path.stem
+    prefix = "demo_"
+    if not stem.startswith(prefix):
+        return stem
+    raw = stem[len(prefix):]
+    try:
+        return datetime.strptime(raw, "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return raw
+
+
+def demo_results_directory() -> Path:
+    """Directory where this demo writes and reloads JSON result files."""
+    return Path(__file__).parent / "results" / "demo"
+
+
+def list_saved_result_files(results_dir: Path | None = None) -> list[Path]:
+    """List JSON files previously saved by this demo, newest filename first."""
+    directory = demo_results_directory() if results_dir is None else Path(results_dir)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob("demo_*.json"), key=lambda path: path.name, reverse=True)
+
+
+def _saved_text(value) -> str:
+    """Coerce saved method/caption values into text the results form can display."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)
+
+
+def _resolved_saved_result_path(file_path: Path) -> Path:
+    """Resolve a result path and reject anything that leaves results/demo.
+
+    ``Path.resolve()`` follows symlinks, so a ``demo_*.json`` link whose
+    target sits outside the save directory is rejected before it is opened.
+    """
+    resolved = Path(file_path).resolve()
+    allowed_root = demo_results_directory().resolve()
+    if resolved == allowed_root or not resolved.is_relative_to(allowed_root):
+        raise ValueError("Saved result file must stay under results/demo.")
+    return resolved
+
+
+def load_saved_results(file_path: Path):
+    """Load saved results from disk.
+
+    demo.py writes a JSON list. A ``{metadata, results}`` object is also
+    accepted so older wrapped files can be reopened without changing the
+    current save format.
+    """
+    resolved = _resolved_saved_result_path(file_path)
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Saved JSON is not valid: {exc.msg}") from exc
+
+    if isinstance(payload, list):
+        results = payload
+        metadata = {}
+    elif isinstance(payload, dict):
+        results = payload.get("results", [])
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ValueError("Saved results metadata has invalid format.")
+    else:
+        raise ValueError("Saved JSON must be a list or an object with 'results'.")
+
+    if not isinstance(results, list) or any(not isinstance(item, dict) for item in results):
+        raise ValueError("Saved results must be a list of objects.")
+
+    exp_mode = metadata.get("exp_mode") or infer_exp_mode_from_results(results)
+    timestamp = metadata.get("timestamp") or infer_timestamp_from_filename(resolved)
+    method_content = metadata.get("method_content")
+    caption = metadata.get("caption")
+    if results:
+        first = results[0]
+        if method_content is None:
+            method_content = first.get("content", "")
+        if caption is None:
+            caption = first.get("caption", "")
+
+    return {
+        "results": results,
+        "exp_mode": exp_mode,
+        "timestamp": timestamp,
+        "method_content": _saved_text(method_content),
+        "caption": _saved_text(caption),
+        "json_file": str(resolved),
+    }
+
+
 def main():
     st.title("🍌 PaperBanana Demo")
     st.markdown("AI-powered scientific diagram generation and refinement")
@@ -424,6 +549,15 @@ def main():
                 value=10,
                 key="tab1_num_candidates",
                 help="How many parallel candidates to generate"
+            )
+
+            max_concurrent = st.number_input(
+                "Max Concurrent Requests",
+                min_value=1,
+                max_value=20,
+                value=10,
+                key="tab1_max_concurrent",
+                help="How many candidates to generate at the same time. Lower this if the API times out under heavy parallel load.",
             )
             
             aspect_ratio = st.selectbox(
@@ -497,6 +631,45 @@ def main():
                 )
             else:
                 image_gen_model_name = image_model_selection
+
+            st.divider()
+            st.markdown("### Load Saved Results")
+            saved_result_files = list_saved_result_files()
+            saved_result_labels = ["None"]
+            saved_result_map = {"None": None}
+            for file_path in saved_result_files:
+                label = f"{file_path.name} ({infer_timestamp_from_filename(file_path)})"
+                saved_result_labels.append(label)
+                saved_result_map[label] = file_path
+
+            selected_saved_result = st.selectbox(
+                "Saved Result File",
+                saved_result_labels,
+                index=0,
+                key="tab1_saved_result_file",
+                help="Load a previously generated demo JSON from results/demo",
+            )
+            if st.button("Load Saved Results", use_container_width=True, key="tab1_load_saved_results"):
+                selected_path = saved_result_map.get(selected_saved_result)
+                if selected_path is None:
+                    st.warning("Please select a saved result file first.")
+                else:
+                    try:
+                        loaded = load_saved_results(selected_path)
+                        st.session_state["results"] = loaded["results"]
+                        st.session_state["exp_mode"] = loaded["exp_mode"]
+                        st.session_state["timestamp"] = loaded["timestamp"]
+                        st.session_state["json_file"] = loaded["json_file"]
+                        st.session_state["method_content"] = loaded["method_content"]
+                        st.session_state["caption"] = loaded["caption"]
+                        # Clear these before the example widgets are created so
+                        # the restored text is shown instead of the built-in example.
+                        st.session_state["method_example_selector"] = "None"
+                        st.session_state["caption_example_selector"] = "None"
+                        st.success(f"Loaded {selected_path.name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to load saved results: {e}")
         
         st.divider()
         
@@ -632,6 +805,7 @@ The framework extends to statistical plots by adjusting the Visualizer and Criti
                             main_model_name=main_model_name,
                             image_gen_model_name=image_gen_model_name,
                             task_name=task_name,
+                            max_concurrent=int(max_concurrent),
                         ))
                         st.session_state["results"] = results
                         st.session_state["exp_mode"] = exp_mode
@@ -680,7 +854,11 @@ The framework extends to statistical plots by adjusting the Visualizer and Criti
                 if json_file_path.exists():
                     col1, col2 = st.columns([3, 1])
                     with col1:
-                        st.info(f"📄 Results saved to: `{json_file_path.relative_to(Path.cwd())}`")
+                        try:
+                            display_path = json_file_path.resolve().relative_to(Path.cwd())
+                        except ValueError:
+                            display_path = json_file_path
+                        st.info(f"📄 Results saved to: `{display_path}`")
                     with col2:
                         with open(json_file_path, "r", encoding="utf-8") as f:
                             json_data = f.read()
@@ -801,10 +979,7 @@ The framework extends to statistical plots by adjusting the Visualizer and Criti
                     else:
                         with st.spinner(f"Refining image to {refine_resolution} resolution... This may take a minute."):
                             try:
-                                # Convert PIL image to bytes
-                                img_byte_arr = BytesIO()
-                                uploaded_image.save(img_byte_arr, format='JPEG')
-                                image_bytes = img_byte_arr.getvalue()
+                                image_bytes = encode_refine_image_as_jpeg(uploaded_image)
                                 
                                 # Call nanoviz API
                                 refined_bytes, message = asyncio.run(
