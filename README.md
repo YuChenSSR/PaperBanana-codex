@@ -326,3 +326,14 @@ If you find this repo helpful, please cite our paper as follows:
 This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
 
 Our goal is simply to benefit the community, so currently we have no plans to use it for commercial purposes. The core methodology was developed during my internship at Google, and patents have been filed for these specific workflows by Google. While this doesn't impact open-source research efforts, it restricts third-party commercial applications using similar logic.
+
+## Star History
+
+<a href="https://www.star-history.com/#dwzhu-pku/PaperBanana&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=dwzhu-pku/PaperBanana&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=dwzhu-pku/PaperBanana&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=dwzhu-pku/PaperBanana&type=Date" />
+ </picture>
+</a>
+
