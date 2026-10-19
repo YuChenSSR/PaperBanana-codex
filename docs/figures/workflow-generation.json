@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-10-19T22:12:11+08:00",
+  "generator": "paperbanana (first-author pipeline with Codex subscription adapter)",
+  "fork": "https://github.com/YuChenSSR/PaperBanana-codex",
+  "upstream": "https://github.com/dwzhu-pku/PaperBanana",
+  "run_reported_repository_commit": "4f1fa9fb638dd204ee1c493c830bbdb764726b8f",
+  "adapter_startup_fix_commit": "59e2161843f9bb5663dcd54bdb6fb69553cc8490",
+  "source_note": "The MCP override startup fix was applied before generation and committed during the run. Backend command extraction and its regression test were also committed during the run.",
+  "adapter_sha256_at_run_start": {
+    "paperbanana_codex.py": "3271e9d97ba4f4107b2ecf8c0faa9e4b1d496ed77e55633d69a93185477f80c6",
+    "codex_backend.py": "eee47d16e174d5d9c1741d1942a5d53899c9622a13020267d3171ff8aaac7095"
+  },
+  "input": "docs/figures/workflow-method.md",
+  "output": "assets/paperbanana-codex-workflow.png",
+  "caption": "Complete PaperBanana-Codex repository workflow: user inputs and skill/CLI entry, the original five-agent pipeline with reference retrieval and bounded visual critique, the shared ChatGPT subscription runtime, task-specific diagram and plot rendering, and saved outputs. Distinguish the retained provider-API route.",
+  "configuration": {
+    "mode": "demo_full",
+    "retrieval": "auto",
+    "task": "diagram",
+    "critic_rounds": 1,
+    "candidates": 1,
+    "requested_aspect_ratio": "16:9",
+    "requested_resolution": "4k"
+  },
+  "runtime": {
+    "authentication": "ChatGPT subscription via local Codex app-server",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "xhigh"
+  },
+  "execution": {
+    "status": "completed",
+    "selected_reference_ids": [
+      "ref_51",
+      "ref_26",
+      "ref_139",
+      "ref_7",
+      "ref_50",
+      "ref_27",
+      "ref_166",
+      "ref_107",
+      "ref_23",
+      "ref_198"
+    ],
+    "text_vision_calls": 8,
+    "native_image_generation_events": 3,
+    "model_call_seconds": 1242.58,
+    "selected_author_output": "target_diagram_critic_desc0_base64_jpg"
+  },
+  "image": {
+    "format": "PNG",
+    "dimensions": [
+      1672,
+      941
+    ],
+    "bytes": 1497712,
+    "sha256": "3ec6a5cb4a4a32247bf3ecc05eea99ae160bd3e3dd4d84c7c87a64bfd0649e29",
+    "postprocessing": "None; native output copied byte-for-byte."
+  },
+  "visual_review": {
+    "checks": [
+      "Labels and five-stage author pipeline order",
+      "Continuous wrapper-to-Retriever connection",
+      "Alternative native-image and Matplotlib rendering branches",
+      "Critic-to-Visualizer feedback loop",
+      "Separate text/vision and native-image support connections",
+      "Saved outputs and isolated upstream provider-API route"
+    ],
+    "result": "Accepted for README workflow documentation; no numeric quality score assigned."
+  },
+  "notes": [
+    "Requested resolution does not guarantee exact output dimensions.",
+    "Raw prompts, call logs and intermediate images remain in the local git-ignored results directory.",
+    "The last regeneration is not followed by an additional author Critic pass; the exported image was separately inspected by the integrating Codex assistant."
+  ]
+}

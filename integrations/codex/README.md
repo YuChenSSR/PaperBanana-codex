@@ -9,6 +9,14 @@ this integration.
 这是作者版 PaperBanana 的 Codex 订阅适配。保留作者的检索、规划、风格、
 绘图和 Critic 流程，通过本地 Codex 登录调用模型。
 
+## Workflow
+
+[![PaperBanana-Codex workflow](../../assets/paperbanana-codex-workflow.png)](../../assets/paperbanana-codex-workflow.png)
+
+Generated with this repository's `$paperbanana` subscription pipeline.
+See the [source brief](../../docs/figures/workflow-method.md) and
+[generation record](../../docs/figures/workflow-generation.json).
+
 ## Install (macOS / Linux)
 
 Requirements: Python 3.12, `uv`, Git, and a recent Codex CLI with native image
@@ -116,7 +124,8 @@ installation only. A completed live figure run is needed to establish actual
 account/model/native-image access. App-server interfaces can change; check a
 small live example after upgrading Codex or the upstream repository.
 
-Validation on 2026-10-19: seven unit tests passed, and a complete diagram smoke
+Validation on 2026-10-19: eight adapter tests passed, including a real app-server
+initialization check, and a complete diagram smoke
 test ran with Codex CLI 0.163.0, ChatGPT login, and `gpt-6-astra` / `xhigh`. The
 test selected 10 references from the author's 200-reference retrieval pool and
 completed 8 text/vision calls and 3 native image-generation calls, including one

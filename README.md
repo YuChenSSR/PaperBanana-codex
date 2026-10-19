@@ -15,15 +15,11 @@ See the [English integration guide](integrations/codex/README.md) for setup and 
 
 ## 工作方式
 
-```text
-方法说明 + 图注
-  → 检索参考图
-  → Planner 规划
-  → Stylist 调整风格
-  → Codex 原生绘图
-  → Critic 看图检查与修改
-  → PNG + 中间结果 + 运行记录
-```
+[![PaperBanana-Codex 完整工作流程：输入与调用、作者五阶段流程、订阅模型后端、审图修改回路及输出](assets/paperbanana-codex-workflow.png)](assets/paperbanana-codex-workflow.png)
+
+上图通过本仓库的 `$paperbanana` 订阅流程生成，点击可查看原图。
+它展示默认工作流、方法图与统计图两种渲染路径，以及独立保留的原版 API 入口。
+[绘图说明](docs/figures/workflow-method.md) · [生成记录](docs/figures/workflow-generation.json)
 
 - **文字和视觉理解**：默认继承你在 Codex 中配置的模型和推理档位。
 - **方法图出图**：使用 Codex 原生图片生成工具。
@@ -133,7 +129,7 @@ PDF 需要先由 Codex 提取相关方法文本；适配器本身接收 UTF-8 �
 
 2026-10-19，在 Codex CLI 0.163.0、ChatGPT 登录及 `gpt-6-astra / xhigh` 下：
 
-- 7 项适配器测试通过。
+- 8 项适配器测试通过，包括实际 Codex 后端启动检查。
 - 完整方法图样例从作者的 200 条参考候选中选出 10 条。
 - 完成 8 次文字/视觉调用、3 次原生图片生成，包含一轮 Critic 驱动修改。
 - 检查了最终图片的三阶段结构、标签和箭头方向。
