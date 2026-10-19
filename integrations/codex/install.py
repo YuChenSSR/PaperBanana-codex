@@ -23,8 +23,13 @@ def install(bin_dir, skill_dir, python):
     skill_file = skill_dir / 'SKILL.md'
     if launcher.exists() and MARKER not in launcher.read_text():
         raise ValueError(f'Refusing to replace an unrelated command: {launcher}')
-    if skill_file.exists() and 'name: paperbanana-author' not in skill_file.read_text():
+    if skill_file.exists() and not {'name: paperbanana', 'name: paperbanana-author'}.intersection(skill_file.read_text().splitlines()):
         raise ValueError(f'Refusing to replace an unrelated skill: {skill_file}')
+    legacy_dir = skill_dir.with_name('paperbanana-author')
+    legacy_file = legacy_dir / 'SKILL.md'
+    if skill_dir.name == 'paperbanana' and not skill_dir.exists() and legacy_file.is_file():
+        if 'name: paperbanana-author' in legacy_file.read_text().splitlines():
+            legacy_dir.rename(skill_dir)
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     for path in (launcher, skill_file):
         if path.exists():
@@ -43,7 +48,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--bin-dir', type=Path, default=Path.home() / '.local/bin')
     home = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
-    p.add_argument('--skill-dir', type=Path, default=home / 'skills/paperbanana-author')
+    p.add_argument('--skill-dir', type=Path, default=home / 'skills/paperbanana')
     p.add_argument('--python', type=Path, default=ROOT / '.venv/bin/python')
     args = p.parse_args()
     try:
@@ -53,7 +58,7 @@ def main():
         return 1
     import json
     print(json.dumps(result, indent=2))
-    print('Open a new Codex chat to discover $paperbanana-author. Run the command with doctor to verify.')
+    print('Open a new Codex chat to discover $paperbanana. Run the command with doctor to verify.')
     return 0
 
 

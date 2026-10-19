@@ -1,5 +1,5 @@
 ---
-name: paperbanana-author
+name: paperbanana
 description: "Generate academic method diagrams or data plots with the first author's PaperBanana implementation and Codex subscription models. Use when the user requests PaperBanana, PaperBanana 作者版, or dwzhu-pku/PaperBanana."
 ---
 

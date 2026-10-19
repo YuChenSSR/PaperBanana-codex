@@ -28,14 +28,16 @@ codex login
 
 If already logged in with ChatGPT, skip `codex login`. Installation writes a
 launcher to `~/.local/bin/paperbanana-author` and a skill to
-`${CODEX_HOME:-~/.codex}/skills/paperbanana-author`. It does not modify the global
+`${CODEX_HOME:-~/.codex}/skills/paperbanana`. It does not modify the global
 Codex model, API credentials, or MCP configuration. Keep the checkout in place
 because the launcher points to its virtual environment. The installer backs up
-previous versions of its own launcher/skill and refuses unrelated files.
+previous versions of its own launcher/skill and refuses unrelated files. An
+existing `paperbanana-author` skill is migrated to `paperbanana` when the new
+skill directory does not yet exist.
 
 Open a new Codex chat and request:
 
-> 用 $paperbanana-author 根据这份方法说明生成论文架构图，使用订阅模式。
+> 用 $paperbanana 根据这份方法说明生成论文架构图，使用订阅模式。
 
 ## Command line
 
