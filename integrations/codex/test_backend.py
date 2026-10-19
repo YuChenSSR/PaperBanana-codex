@@ -4,6 +4,7 @@ import base64
 from io import BytesIO
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -21,6 +22,37 @@ def sample_png():
 
 
 class BackendTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('codex'), 'Codex CLI is needed for the protocol startup check')
+    def test_mcp_disable_overrides_are_accepted_by_codex(self):
+        async def check(tmp):
+            import json
+            backend = CodexBackend(tmp, model='test-model')
+            backend.user_cfg = {'mcp_servers': {'paperbanana_startup_test': {}}}
+            command = backend.command()
+            command += ['-c', 'mcp_servers.paperbanana_startup_test.command="false"']
+            proc = await asyncio.create_subprocess_exec(
+                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=16 * 1024 * 1024,
+            )
+            try:
+                proc.stdin.write((json.dumps({'id': 1, 'method': 'initialize', 'params': {
+                    'clientInfo': {'name': 'paperbanana_startup_test', 'version': '1.0'}
+                }}) + '\n').encode())
+                await proc.stdin.drain()
+                while True:
+                    line = await asyncio.wait_for(proc.stdout.readline(), 15)
+                    self.assertTrue(line, 'Codex rejected the model-backend startup configuration')
+                    event = json.loads(line)
+                    if event.get('id') == 1:
+                        self.assertIn('result', event)
+                        break
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    await proc.wait()
+        with tempfile.TemporaryDirectory() as tmp:
+            asyncio.run(check(tmp))
+
     def test_large_retrieval_keeps_every_reference_under_request_limit(self):
         prefix = '**Target Input**\nA method\n**Candidate Pool**\n'
         blocks = [f'Candidate Diagram {i}:\n- Diagram ID: ref_{i}\n- Method: ' + 'x' * 600 + '\n'

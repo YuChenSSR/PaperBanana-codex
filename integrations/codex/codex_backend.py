@@ -145,6 +145,26 @@ class CodexBackend:
         self.native_images = {}
         self.lock = asyncio.Lock()
 
+    def command(self, image=False):
+        command = [self.codex, "app-server", "--listen", "stdio://"]
+        overrides = {
+            "model_provider": "openai", "web_search": "disabled",
+            "features.shell_tool": False, "features.multi_agent": False,
+            "features.plugins": False, "features.browser_use": False,
+            "features.computer_use": False, "features.image_generation": image,
+            "features.skip_host_skill_discovery": True,
+            "project_doc_max_bytes": 0,
+        }
+        for name in self.user_cfg.get("mcp_servers", {}):
+            # Codex -c splits dotted keys literally; quoted segments become
+            # new server names (e.g. '"blender"') with no valid transport.
+            if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
+                raise BackendError(f'Cannot isolate MCP server with unsupported name: {name!r}')
+            overrides[f'mcp_servers.{name}.enabled'] = False
+        for name, value in overrides.items():
+            command += ["-c", f"{name}={json.dumps(value)}"]
+        return command
+
     async def _infer(self, contents, system, image=False):
         async with self.lock:
             await require_subscription(self.codex)
@@ -156,19 +176,7 @@ class CodexBackend:
                 "system": system, "input": inputs, "model": self.model,
                 "effort": self.effort, "native_image": image,
             }, ensure_ascii=False, indent=2))
-            command = [self.codex, "app-server", "--listen", "stdio://"]
-            overrides = {
-                "model_provider": "openai", "web_search": "disabled",
-                "features.shell_tool": False, "features.multi_agent": False,
-                "features.plugins": False, "features.browser_use": False,
-                "features.computer_use": False, "features.image_generation": image,
-                "features.skip_host_skill_discovery": True,
-                "project_doc_max_bytes": 0,
-            }
-            for name in self.user_cfg.get("mcp_servers", {}):
-                overrides[f'mcp_servers.{json.dumps(name)}.enabled'] = False
-            for name, value in overrides.items():
-                command += ["-c", f"{name}={json.dumps(value)}"]
+            command = self.command(image)
             instructions = (
                 "You are a stateless model backend for the user's PaperBanana installation. "
                 "Complete only the supplied scientific-illustration stage. "
