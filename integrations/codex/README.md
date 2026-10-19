@@ -11,10 +11,12 @@ this integration.
 
 ## Workflow
 
-[![PaperBanana-Codex workflow](../../assets/paperbanana-codex-workflow.png)](../../assets/paperbanana-codex-workflow.png)
+[![PaperBanana-Codex workflow](../../assets/paperbanana-codex-workflow-upstream-style.png)](../../assets/paperbanana-codex-workflow-upstream-style.png)
 
-Generated with this repository's `$paperbanana` subscription pipeline.
-See the [source brief](../../docs/figures/workflow-method.md) and
+The workflow was generated with this repository's `$paperbanana` subscription pipeline,
+then restyled through native image editing using the original author's method and
+teaser figures as palette references. See the [source brief](../../docs/figures/workflow-method.md),
+[style revision](../../docs/figures/workflow-style-revision.md), and
 [generation record](../../docs/figures/workflow-generation.json).
 
 ## Install (macOS / Linux)

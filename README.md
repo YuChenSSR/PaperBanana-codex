@@ -15,11 +15,13 @@ See the [English integration guide](integrations/codex/README.md) for setup and 
 
 ## 工作方式
 
-[![PaperBanana-Codex 完整工作流程：输入与调用、作者五阶段流程、订阅模型后端、审图修改回路及输出](assets/paperbanana-codex-workflow.png)](assets/paperbanana-codex-workflow.png)
+[![PaperBanana-Codex 完整工作流程：输入与调用、作者五阶段流程、订阅模型后端、审图修改回路及输出](assets/paperbanana-codex-workflow-upstream-style.png)](assets/paperbanana-codex-workflow-upstream-style.png)
 
-上图通过本仓库的 `$paperbanana` 订阅流程生成，点击可查看原图。
-它展示默认工作流、方法图与统计图两种渲染路径，以及独立保留的原版 API 入口。
-[绘图说明](docs/figures/workflow-method.md) · [生成记录](docs/figures/workflow-generation.json)
+流程内容通过本仓库的 `$paperbanana` 订阅流程生成，随后参照原作者的
+[方法图](assets/method_diagram.png)与[示例图](assets/teaser_figure.jpg)进行了原生配色修订。
+点击可查看原图；粉蓝对应规划阶段，杏橙突出出图与修改回路。
+图中包含方法图与统计图两种渲染路径，以及独立保留的原版 API 入口。
+[绘图说明](docs/figures/workflow-method.md) · [配色修订](docs/figures/workflow-style-revision.md) · [生成记录](docs/figures/workflow-generation.json)
 
 - **文字和视觉理解**：默认继承你在 Codex 中配置的模型和推理档位。
 - **方法图出图**：使用 Codex 原生图片生成工具。

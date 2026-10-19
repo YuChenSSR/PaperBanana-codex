@@ -71,5 +71,35 @@
     "Requested resolution does not guarantee exact output dimensions.",
     "Raw prompts, call logs and intermediate images remain in the local git-ignored results directory.",
     "The last regeneration is not followed by an additional author Critic pass; the exported image was separately inspected by the integrating Codex assistant."
-  ]
+  ],
+  "displayed_output": "assets/paperbanana-codex-workflow-upstream-style.png",
+  "style_revision": {
+    "revised_at": "2026-10-19T23:06:43+08:00",
+    "method": "Native image edit of the PaperBanana-generated workflow; the full pipeline was not rerun.",
+    "tool": "image_gen.imagegen (built-in native image editing)",
+    "source": "assets/paperbanana-codex-workflow.png",
+    "references": [
+      "assets/method_diagram.png",
+      "assets/teaser_figure.jpg"
+    ],
+    "prompt": "docs/figures/workflow-style-revision.md",
+    "output": "assets/paperbanana-codex-workflow-upstream-style.png",
+    "palette": {
+      "planning": "powder blue",
+      "refinement": "warm apricot",
+      "outputs": "butter cream",
+      "runtime": "pale sage"
+    },
+    "image": {
+      "format": "PNG",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "bytes": 1559744,
+      "sha256": "e19d203733ccf13ddc8f3d91106b4b15859f563574cdea697ee6a8771547ea54"
+    },
+    "review": "Visually checked labels, stage order, alternative rendering branches, critic feedback, separate model support, and isolated upstream API route.",
+    "previous_image_preserved": true
+  }
 }
