@@ -1,4 +1,6 @@
 # <div align="center">PaperBanana 🍌</div>
+
+> **Codex subscription fork:** This fork keeps the first author's implementation and adds a local Codex/ChatGPT subscription adapter. See [installation and usage](integrations/codex/README.md). The original author's README continues below; the Codex integration is independently maintained in this fork.
 <div align="center">Dawei Zhu, Rui Meng, Yale Song, Xiyu Wei, Sujian Li, Tomas Pfister and Jinsung yoon
 <br><br></div>
 
